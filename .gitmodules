@@ -1,0 +1,3 @@
+[submodule "external/libgbemu"]
+	path = external/libgbemu
+	url = https://github.com/selassje/libgbemu.git
