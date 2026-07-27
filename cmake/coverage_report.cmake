@@ -1,0 +1,84 @@
+# LLVM-only coverage support (source-based, via -fprofile-instr-generate),
+# unlike aoc's version which also supports GNU/gcov+lcov. This project only ever
+# builds with cl.exe or clang++ on Windows, never gcc, so the gcov path was
+# dropped rather than carried over unused.
+
+function(setup_coverage_report_target)
+  if(ENABLE_COVERAGE_REPORT)
+    message("Enabling Test Coverage Report")
+
+    if(NOT ${CMAKE_CXX_COMPILER_ID} STREQUAL "Clang")
+      message(
+        SEND_ERROR
+          "ENABLE_COVERAGE_REPORT requires Clang. Try disabling ENABLE_COVERAGE_REPORT"
+      )
+      return()
+    endif()
+
+    # Windows' LLVM install exposes unversioned names (llvm-cov.exe);
+    # apt.llvm.org packages on Linux only ship version-suffixed ones
+    # (llvm-cov-21) unless update-alternatives was run, so fall back to a
+    # version-suffixed name derived from the compiler itself.
+    string(REGEX REPLACE "\\..+" "" LLVM_VER "${CMAKE_CXX_COMPILER_VERSION}")
+    find_program(LLVM_PROFDATA NAMES "llvm-profdata"
+                                     "llvm-profdata-${LLVM_VER}" REQUIRED)
+    find_program(LLVM_COV NAMES "llvm-cov" "llvm-cov-${LLVM_VER}" REQUIRED)
+
+    file(MAKE_DIRECTORY ${CMAKE_BINARY_DIR}/coverage)
+
+    # Unlike libgbemu, there's no tests/ subdirectory (yet) to pull an
+    # EXECUTABLE target's coverage from - get_property(DIRECTORY tests ...)
+    # hard-errors if that directory was never add_subdirectory()'d. src/ is
+    # where gbemu-frontend itself lives, so that's what gets instrumented until
+    # this repo grows real tests of its own.
+    get_property(
+      FRONTEND_TARGETS
+      DIRECTORY ${CMAKE_SOURCE_DIR}/src
+      PROPERTY BUILDSYSTEM_TARGETS)
+    foreach(FRONTEND_TARGET IN LISTS FRONTEND_TARGETS)
+      get_target_property(TARGET_TYPE ${FRONTEND_TARGET} TYPE)
+      if(${TARGET_TYPE} STREQUAL "EXECUTABLE")
+        set(OBJECTS ${OBJECTS} -object $<TARGET_FILE:${FRONTEND_TARGET}>)
+      endif()
+    endforeach()
+
+    # external/ excluded so the report reflects this repo's own code, not the
+    # vendored libgbemu submodule it links against.
+    add_custom_target(
+      generate-coverage-report
+      COMMAND ${LLVM_PROFDATA} merge ${CMAKE_BINARY_DIR}/coverage/*.profraw
+              --output ${CMAKE_BINARY_DIR}/coverage.profdata
+      COMMAND
+        ${LLVM_COV} show ${OBJECTS}
+        -instr-profile=${CMAKE_BINARY_DIR}/coverage.profdata
+        -ignore-filename-regex=external -format=html
+        -output-dir=${CMAKE_BINARY_DIR}/coverage-html
+      COMMAND
+        ${LLVM_COV} report ${OBJECTS}
+        -instr-profile=${CMAKE_BINARY_DIR}/coverage.profdata
+        -ignore-filename-regex=external
+      COMMAND
+        ${LLVM_COV} export ${OBJECTS}
+        -instr-profile=${CMAKE_BINARY_DIR}/coverage.profdata
+        -ignore-filename-regex=external -format=lcov >
+        ${CMAKE_BINARY_DIR}/coverage.lcov
+      # Clear raw profiles *after* this report is generated, not before -
+      # otherwise the next invocation would start clean, but this one would
+      # have wiped out the very files it needs to merge. Leaving them around
+      # would instead make every future report cumulative across however many
+      # unrelated test runs happened since the last generate-coverage-report,
+      # rather than reflecting just whatever ran since this one.
+      COMMAND ${CMAKE_COMMAND} -E rm -f ${CMAKE_BINARY_DIR}/coverage/*.profraw
+      COMMENT
+        "HTML coverage report: ${CMAKE_BINARY_DIR}/coverage-html/index.html")
+  endif()
+endfunction()
+
+function(setup_coverage_report_flags TARGET)
+  if(ENABLE_COVERAGE_REPORT)
+    target_compile_options(${TARGET} PRIVATE -fprofile-instr-generate
+                                             -fcoverage-mapping)
+    target_link_libraries(${TARGET} PRIVATE -fprofile-instr-generate
+                                            -fcoverage-mapping)
+  endif()
+endfunction()

@@ -1,0 +1,9 @@
+Diagnostics:
+  Suppress:
+    - ovl_ambiguous_call
+  ClangTidy:
+    Remove:
+      - misc-use-anonymous-namespace
+      - cppcoreguidelines-avoid-do-while
+  Includes:
+    IgnoreHeader: ""
