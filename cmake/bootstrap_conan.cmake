@@ -30,7 +30,23 @@ if(DEFINED CMAKE_TOOLCHAIN_FILE AND NOT EXISTS "${CMAKE_TOOLCHAIN_FILE}")
       # preset picker and collides when multiple presets/output folders write to
       # that same shared file in one session.
       -c
-      tools.cmake.cmaketoolchain:user_presets=)
+      tools.cmake.cmaketoolchain:user_presets=
+      # Unlike libgbemu, this repo depends on sdl (via SDL3), whose Conan recipe
+      # pulls in Linux system packages (X11/Wayland/EGL/ALSA dev headers)
+      # through several transitive *_system_requirements() hooks when no
+      # prebuilt binary matches - those default to only *checking* for the
+      # packages and erroring if absent, so let Conan actually install them
+      # itself (works out of the box on GitHub Actions' passwordless-sudo
+      # runners; on a dev machine without passwordless sudo this may still
+      # prompt/fail, in which case install the reported packages manually and
+      # reconfigure).
+      -c
+      tools.system.package_manager:mode=install
+      # mode=install alone still runs apt-get unprefixed, which fails with a
+      # permission error as the non-root CI runner user - this makes Conan
+      # actually prepend sudo.
+      -c
+      tools.system.package_manager:sudo=True)
 
   # Ninja can't auto-discover cl.exe the way the Visual Studio generator can, so
   # Conan's CMakeToolchain needs to be told which generator it's for.

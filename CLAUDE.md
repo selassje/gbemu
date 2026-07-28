@@ -33,6 +33,18 @@ Building is preset-driven, same as `libgbemu` - pick one from
 first `cmake --preset` for the native presets (no separate `conan install`
 step) - see `cmake/bootstrap_conan.cmake`.
 
+**Native Linux presets need SDL3's system dependencies.** Unlike `libgbemu`,
+this repo pulls in `sdl` via Conan, and SDL3's recipe needs a long list of
+Linux X11/Wayland/EGL/ALSA dev packages to build from source whenever
+conancenter has no prebuilt binary matching the exact
+compiler/version/stdlib combo (common - hit locally and in CI both).
+`cmake/bootstrap_conan.cmake` sets `tools.system.package_manager:mode=install`
++ `:sudo=True` so Conan installs whatever's missing itself via `apt`
+automatically (works out of the box with passwordless sudo, e.g. GitHub
+Actions runners); on a dev machine without passwordless sudo this may still
+prompt/fail on first configure, in which case install the packages Conan's
+error message lists manually, then reconfigure.
+
 ```
 cmake --preset dev_ninja_gcc
 cmake --build --preset dev_ninja_gcc
@@ -63,10 +75,20 @@ git clone https://github.com/emscripten-core/emsdk.git
 cd emsdk && ./emsdk install latest && ./emsdk activate latest
 source ./emsdk_env.sh   # sets $EMSDK, which the preset's toolchainFile needs
 cd ..
+embuilder build sdl3     # see below for why this goes first, on a cold cache
 cmake --preset dev_ninja_emscripten
 cmake --build --preset dev_ninja_emscripten
 node builds/dev_ninja_emscripten/build/gbemu-frontend.js   # smoke-test only; SDL_INIT_VIDEO needs a real browser canvas
 ```
+
+**Cold-cache first build: pre-build the SDL3 port with `embuilder build sdl3`
+before `cmake --build`.** The port builds lazily (first TU that needs it
+triggers the build), and on a cold cache that build isn't safe against
+multiple `ninja` jobs hitting that trigger concurrently - hit for real in CI:
+`AssertionError: attempt to lock the cache while a parent process is holding
+the lock`. Once the port's built once (this machine's emsdk cache, or CI's
+if it ever gets an actions/cache step), subsequent builds don't need this -
+only a genuinely first-time/cold cache does.
 
 **C++20 modules + Emscripten + the SDL3 port do work together**, verified
 directly (build+link, with a real `SDL_Init`/SDL call) against emsdk `6.0.4`

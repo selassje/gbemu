@@ -244,6 +244,16 @@ jobs:
       - name: Setup emsdk
         uses: emscripten-core/setup-emsdk@6ab9eb1bda2574c4ddb79809fc9247783eaf9021 # v14
 
+      # Building the SDL3 port is lazy (first TU that needs it triggers the
+      # build) and its cache-lock isn't safe against multiple ninja jobs
+      # hitting that first-use trigger concurrently on a cold cache -
+      # confirmed by a real CI failure: "AssertionError: attempt to lock the
+      # cache while a parent process is holding the lock". Pre-building it
+      # serially, once, before the parallel ninja build avoids the race
+      # entirely.
+      - name: Pre-build SDL3 port
+        run: embuilder build sdl3
+
       - name: Configure
         run: cmake --preset dev_ninja_emscripten
 
