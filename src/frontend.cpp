@@ -136,6 +136,10 @@ App::run(std::string_view romPath)
     return std::unexpected(std::string("SDL_CreateTexture failed: ") +
                            SDL_GetError());
   }
+  // Nearest-neighbor, not the default linear filter - the window scales the
+  // native 160x144 framebuffer up 3x, and linear filtering blurs the pixel
+  // art instead of keeping crisp per-pixel edges.
+  SDL_SetTextureScaleMode(m_impl->texture, SDL_SCALEMODE_NEAREST);
 
   // Emscripten: the browser owns the main loop (blocking here would freeze
   // the tab, since it never yields back to the JS event loop) and paces it
