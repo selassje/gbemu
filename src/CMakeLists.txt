@@ -1,7 +1,7 @@
-add_executable(gbemu-frontend)
+add_executable(gbemu)
 
 target_sources(
-  gbemu-frontend
+  gbemu
   PUBLIC FILE_SET
          public_modules
          TYPE
@@ -18,8 +18,8 @@ if(MSVC)
                               PROPERTIES COMPILE_OPTIONS /interface)
 endif()
 
-target_sources(gbemu-frontend PRIVATE ${CMAKE_CURRENT_LIST_DIR}/frontend.cpp
-                                      ${CMAKE_CURRENT_LIST_DIR}/main.cpp)
+target_sources(gbemu PRIVATE ${CMAKE_CURRENT_LIST_DIR}/frontend.cpp
+                             ${CMAKE_CURRENT_LIST_DIR}/main.cpp)
 
 # Same clang+MSVC-STL std module workaround as libgbemu's src/CMakeLists.txt -
 # kept verbatim since it's the identical toolchain gap.
@@ -31,7 +31,7 @@ if(${CMAKE_HOST_SYSTEM_NAME} STREQUAL "Windows"
   set(STD_MODULE ${STD_MODULE_DIR}/std.ixx)
 
   target_sources(
-    gbemu-frontend
+    gbemu
     PUBLIC FILE_SET
            std_module
            TYPE
@@ -45,25 +45,24 @@ if(${CMAKE_HOST_SYSTEM_NAME} STREQUAL "Windows"
                                                                    ON)
 endif()
 
-target_link_libraries(gbemu-frontend PRIVATE gbemu)
+target_link_libraries(gbemu PRIVATE libgbemu)
 
 if(EMSCRIPTEN)
   # No Conan for wasm - emscripten's own SDL3 port, pulled in purely via
   # compile/link flags (see sdl3-config.cmake in the emscripten sysroot).
-  target_compile_options(gbemu-frontend PRIVATE -sUSE_SDL=3)
-  target_link_options(gbemu-frontend PRIVATE -sUSE_SDL=3
-                      -sALLOW_MEMORY_GROWTH=1)
+  target_compile_options(gbemu PRIVATE -sUSE_SDL=3)
+  target_link_options(gbemu PRIVATE -sUSE_SDL=3 -sALLOW_MEMORY_GROWTH=1)
 else()
   find_package(SDL3 REQUIRED CONFIG)
-  target_link_libraries(gbemu-frontend PRIVATE SDL3::SDL3)
+  target_link_libraries(gbemu PRIVATE SDL3::SDL3)
 endif()
 
-setup_compiler_warnings(gbemu-frontend)
-setup_clang_tidy(gbemu-frontend)
-setup_msvc_analysis(gbemu-frontend)
-setup_coverage_report_flags(gbemu-frontend)
-setup_sanitizers(gbemu-frontend)
-setup_std_lib(gbemu-frontend)
+setup_compiler_warnings(gbemu)
+setup_clang_tidy(gbemu)
+setup_msvc_analysis(gbemu)
+setup_coverage_report_flags(gbemu)
+setup_sanitizers(gbemu)
+setup_std_lib(gbemu)
 
 if(EMSCRIPTEN)
   # Must come after setup_compiler_warnings(): emscan-deps's own diagnostics
@@ -73,5 +72,5 @@ if(EMSCRIPTEN)
   # port announcing its own maturity on every TU that sees -sUSE_SDL=3
   # (including scanning the synthesized std module for this target's flag set),
   # not anything about our code.
-  target_compile_options(gbemu-frontend PRIVATE -Wno-experimental)
+  target_compile_options(gbemu PRIVATE -Wno-experimental)
 endif()

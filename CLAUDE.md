@@ -6,16 +6,26 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 The frontend for `libgbemu` (a Game Boy DMG/CGB emulator core, vendored here
 as a git submodule at `external/libgbemu`) - opens a window, drives the
-render/input loop, and links against `libgbemu`'s `gbemu` module. Written in
-C++23 named modules, same as `libgbemu`, built with CMake + CMake Presets.
+render/input loop, and links against `libgbemu`'s `gbemu` C++ module. Written
+in C++23 named modules, same as `libgbemu`, built with CMake + CMake Presets.
 Windowing/input/audio is SDL3, via Conan for native builds and Emscripten's
 own built-in port for the WebAssembly build.
 
-**Current state (scaffolding only):** `App::run()` opens an SDL3 window and
-runs an event/clear/present loop until closed. It does not yet load a ROM,
-call into `libgbemu`'s `GameBoy`, blit a frame, or read keypad input -
-`gbemu-frontend` links against the `gbemu` target already, but `App` doesn't
-call into it yet. That's the natural next step.
+**Naming note**: the executable *CMake target* built by this repo is also
+called `gbemu` - a coincidence with the `gbemu` C++ module name (`import
+gbemu;`, from `libgbemu`) it links against, not the same thing. The library
+*CMake target* those C++ module declarations live in is `libgbemu` (renamed
+from its former `gbemu` specifically to free up that name for this
+executable), still exposing an `import gbemu;`-named module either way. Watch
+for which sense a given `gbemu` refers to.
+
+**Current state:** `App::run(romPath)` loads the ROM at the given path,
+constructs a `gbemu::GameBoy`, and runs a loop that calls `runNextFrame()`,
+blits the resulting pixel buffer into an SDL3 streaming texture, and presents
+it, paced to 60 FPS (native: a manual `SDL_Delay` after each frame; Emscripten:
+`emscripten_set_main_loop_arg`'s own `fps` argument). `main.cpp` treats
+`argv[1]` as the ROM path. Keypad input is not read yet - that's the natural
+next step.
 
 ## Build / test commands
 
@@ -78,7 +88,7 @@ cd ..
 embuilder build sdl3     # see below for why this goes first, on a cold cache
 cmake --preset dev_ninja_emscripten
 cmake --build --preset dev_ninja_emscripten
-node builds/dev_ninja_emscripten/build/gbemu-frontend.js   # smoke-test only; SDL_INIT_VIDEO needs a real browser canvas
+node builds/dev_ninja_emscripten/build/gbemu.js   # smoke-test only; SDL_INIT_VIDEO needs a real browser canvas
 ```
 
 **Cold-cache first build: pre-build the SDL3 port with `embuilder build sdl3`
@@ -152,14 +162,14 @@ intentionally not done now.
 **Why `cmake/coverage_report.cmake` differs from `libgbemu`'s copy**: it
 originally does `get_property(... DIRECTORY ${CMAKE_SOURCE_DIR}/tests ...)`,
 which hard-errors at configure time if `tests/` was never `add_subdirectory`'d
-- this repo has no `tests/` yet, so it was repointed at `src/` (where
-`gbemu-frontend` itself lives) instead, and the coverage report's
+- this repo has no `tests/` yet, so it was repointed at `src/` (where the
+`gbemu` executable itself lives) instead, and the coverage report's
 `-ignore-filename-regex` was changed from `tests` to `external` so the report
 reflects this repo's own code, not the vendored `libgbemu` submodule.
 
 **Why CI has no `ctest`/coverage steps** (unlike `libgbemu`'s): no test
-target exists yet (see above), and `gbemu-frontend` is a windowed app with
-nothing exercising it headlessly. Both should come back once real tests
+target exists yet (see above), and `gbemu` is a windowed app with nothing
+exercising it headlessly. Both should come back once real tests
 exist - re-add `ENABLE_TESTS` wiring plus a `tests/` directory, then restore
 the `Run Tests`/`Generate Coverage Report`/`Upload Coverage to Codecov` steps
 `.github/workflows/ci.yml` had in `libgbemu` before trimming them here.
@@ -167,8 +177,8 @@ the `Run Tests`/`Generate Coverage Report`/`Upload Coverage to Codecov` steps
 **Known-harmless CMake diagnostic on `dev_ninja_clang_tidy`/other
 Windows+Clang presets**: `CMake Error: Disagreement of the location of the
 'std' module` printed 2-3 times during configure, referencing
-`external/libgbemu/src/CMakeFiles/gbemu.dir/std.pcm` vs.
-`src/CMakeFiles/gbemu-frontend.dir/std.pcm`. Cosmetic, not fatal (seen in a
+`external/libgbemu/src/CMakeFiles/libgbemu.dir/std.pcm` vs.
+`src/CMakeFiles/gbemu.dir/std.pcm`. Cosmetic, not fatal (seen in a
 real CI run that built 28/36 targets past it and only failed on an unrelated
 `clang-tidy` finding) - it's `libgbemu`'s and this repo's `src/CMakeLists.txt`
 each independently attaching their own copy of the manual clang+MSVC-STL

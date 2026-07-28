@@ -29,8 +29,8 @@ function(setup_coverage_report_target)
     # Unlike libgbemu, there's no tests/ subdirectory (yet) to pull an
     # EXECUTABLE target's coverage from - get_property(DIRECTORY tests ...)
     # hard-errors if that directory was never add_subdirectory()'d. src/ is
-    # where gbemu-frontend itself lives, so that's what gets instrumented until
-    # this repo grows real tests of its own.
+    # where the gbemu executable itself lives, so that's what gets instrumented
+    # until this repo grows real tests of its own.
     get_property(
       FRONTEND_TARGETS
       DIRECTORY ${CMAKE_SOURCE_DIR}/src

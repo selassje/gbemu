@@ -13,8 +13,8 @@ if(DEFINED CMAKE_TOOLCHAIN_FILE AND NOT EXISTS "${CMAKE_TOOLCHAIN_FILE}")
 
   # Multi-config generators (e.g. the Visual Studio presets) don't set
   # CMAKE_BUILD_TYPE at all - CMAKE_CONFIGURATION_TYPES is what the preset sets
-  # instead, so fall back to that (its first entry, for presets that restrict
-  # it to a single configuration) before defaulting to Debug.
+  # instead, so fall back to that (its first entry, for presets that restrict it
+  # to a single configuration) before defaulting to Debug.
   set(CONAN_BUILD_TYPE "Debug")
   if(CMAKE_BUILD_TYPE)
     set(CONAN_BUILD_TYPE "${CMAKE_BUILD_TYPE}")

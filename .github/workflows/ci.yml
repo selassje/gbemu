@@ -1,4 +1,4 @@
-name: gbemu-frontend CI
+name: gbemu CI
 
 on: [push]
 
@@ -13,9 +13,8 @@ env:
 jobs:
   # No `ctest`/coverage steps yet: this repo has no test target of its own
   # (see CLAUDE.md - libgbemu's own tests are deliberately not built here,
-  # ENABLE_TESTS stays off), and gbemu-frontend is a windowed app with
-  # nothing exercising it headlessly in CI. Both come back once real tests
-  # exist.
+  # ENABLE_TESTS stays off), and gbemu is a windowed app with nothing
+  # exercising it headlessly in CI. Both come back once real tests exist.
   build:
     name: Build (${{ matrix.preset }})
     strategy:

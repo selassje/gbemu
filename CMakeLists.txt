@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.30)
 
 include(cmake/bootstrap_conan.cmake)
 
-project(gbemu-frontend LANGUAGES CXX)
+project(gbemu LANGUAGES CXX)
 
 # See libgbemu's CMakeLists.txt for why this is pinned post-project() rather
 # than relying on the Conan toolchain's default.
@@ -24,9 +24,11 @@ include(cmake/coverage_report.cmake)
 # root CMakeLists.txt guards its clang-format/cmake-format/coverage-report
 # target creation behind PROJECT_IS_TOP_LEVEL, so it's safe to
 # add_subdirectory() directly here without colliding with the identically-named
-# targets this repo's own cmake/clang_format.cmake etc. already define.
-# ENABLE_TESTS stays unset/OFF so libgbemu's own Catch2/test-ROM machinery never
-# builds as part of the frontend.
+# targets this repo's own cmake/clang_format.cmake etc. already define. Its
+# library target is named libgbemu (not gbemu) specifically so it doesn't
+# collide with this repo's own gbemu executable target either. ENABLE_TESTS
+# stays unset/OFF so libgbemu's own Catch2/test-ROM machinery never builds as
+# part of the frontend.
 add_subdirectory(external/libgbemu)
 
 add_subdirectory(src)

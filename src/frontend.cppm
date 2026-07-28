@@ -19,7 +19,7 @@ public:
   App(App&&) = delete;
   App& operator=(App&&) = delete;
 
-  [[nodiscard]] std::expected<void, std::string> run();
+  [[nodiscard]] std::expected<void, std::string> run(std::string_view romPath);
 
 private:
   struct Impl;

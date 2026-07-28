@@ -15,13 +15,17 @@ module;
 
 module frontend;
 
+import gbemu;
+
 namespace frontend {
 
 namespace {
 
-constexpr int WINDOW_WIDTH = 640;
-constexpr int WINDOW_HEIGHT = 576;
+constexpr int WINDOW_WIDTH = static_cast<int>(gbemu::SCREEN_WIDTH);
+constexpr int WINDOW_HEIGHT = static_cast<int>(gbemu::SCREEN_HEIGHT);
 constexpr const char* WINDOW_TITLE = "gbemu";
+constexpr int TARGET_FPS = 60;
+constexpr double TARGET_FRAME_MS = 1000.0 / TARGET_FPS;
 
 }
 
@@ -29,7 +33,10 @@ struct App::Impl
 {
   SDL_Window* window = nullptr;
   SDL_Renderer* renderer = nullptr;
+  SDL_Texture* texture = nullptr;
+  gbemu::GameBoy gameBoy;
   bool running = true;
+  std::optional<std::string> error;
 };
 
 void
@@ -44,9 +51,19 @@ App::frameStep(void* userData)
     }
   }
 
-  SDL_SetRenderDrawColor(impl.renderer, 0, 0, 0, SDL_ALPHA_OPAQUE);
-  SDL_RenderClear(impl.renderer);
-  SDL_RenderPresent(impl.renderer);
+  const auto frame = impl.gameBoy.runNextFrame();
+  if (!frame) {
+    impl.error = frame.error();
+    impl.running = false;
+  } else {
+    SDL_UpdateTexture(impl.texture,
+                      nullptr,
+                      frame->pixels.data_handle(),
+                      static_cast<int>(gbemu::SCREEN_WIDTH * 3));
+    SDL_RenderClear(impl.renderer);
+    SDL_RenderTexture(impl.renderer, impl.texture, nullptr, nullptr);
+    SDL_RenderPresent(impl.renderer);
+  }
 
 #ifdef __EMSCRIPTEN__
   if (!impl.running) {
@@ -62,6 +79,9 @@ App::App()
 
 App::~App()
 {
+  if (m_impl->texture != nullptr) {
+    SDL_DestroyTexture(m_impl->texture);
+  }
   if (m_impl->renderer != nullptr) {
     SDL_DestroyRenderer(m_impl->renderer);
   }
@@ -72,8 +92,21 @@ App::~App()
 }
 
 std::expected<void, std::string>
-App::run()
+App::run(std::string_view romPath)
 {
+  std::ifstream file{ std::filesystem::path(romPath), std::ios::binary };
+  if (!file) {
+    return std::unexpected(std::string("failed to open ROM file: ") +
+                           std::string(romPath));
+  }
+  const std::vector<std::uint8_t> rom{ std::istreambuf_iterator<char>(file),
+                                       std::istreambuf_iterator<char>() };
+
+  const auto loadResult = m_impl->gameBoy.loadRom(rom);
+  if (!loadResult) {
+    return std::unexpected(loadResult.error());
+  }
+
   if (!SDL_Init(SDL_INIT_VIDEO)) {
     return std::unexpected(std::string("SDL_Init failed: ") + SDL_GetError());
   }
@@ -91,16 +124,36 @@ App::run()
                            SDL_GetError());
   }
 
+  m_impl->texture = SDL_CreateTexture(m_impl->renderer,
+                                      SDL_PIXELFORMAT_RGB24,
+                                      SDL_TEXTUREACCESS_STREAMING,
+                                      static_cast<int>(gbemu::SCREEN_WIDTH),
+                                      static_cast<int>(gbemu::SCREEN_HEIGHT));
+  if (m_impl->texture == nullptr) {
+    return std::unexpected(std::string("SDL_CreateTexture failed: ") +
+                           SDL_GetError());
+  }
+
   // Emscripten: the browser owns the main loop (blocking here would freeze
-  // the tab, since it never yields back to the JS event loop). Native: no
-  // such constraint, so a plain blocking loop is simplest.
+  // the tab, since it never yields back to the JS event loop) and paces it
+  // to TARGET_FPS itself. Native: no such constraint, so a plain blocking
+  // loop with an explicit per-frame delay achieves the same target rate.
 #ifdef __EMSCRIPTEN__
-  emscripten_set_main_loop_arg(&App::frameStep, m_impl.get(), 0, 1);
+  emscripten_set_main_loop_arg(&App::frameStep, m_impl.get(), TARGET_FPS, 1);
 #else
   while (m_impl->running) {
+    const auto frameStart = SDL_GetTicks();
     frameStep(m_impl.get());
+    const auto elapsedMs = static_cast<double>(SDL_GetTicks() - frameStart);
+    if (elapsedMs < TARGET_FRAME_MS) {
+      SDL_Delay(static_cast<Uint32>(TARGET_FRAME_MS - elapsedMs));
+    }
   }
 #endif
+
+  if (m_impl->error) {
+    return std::unexpected(*m_impl->error);
+  }
 
   return {};
 }
