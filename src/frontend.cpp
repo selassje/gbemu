@@ -21,8 +21,11 @@ namespace frontend {
 
 namespace {
 
-constexpr int WINDOW_WIDTH = static_cast<int>(gbemu::SCREEN_WIDTH);
-constexpr int WINDOW_HEIGHT = static_cast<int>(gbemu::SCREEN_HEIGHT);
+constexpr int WINDOW_SCALE = 3;
+constexpr int WINDOW_WIDTH =
+  static_cast<int>(gbemu::SCREEN_WIDTH) * WINDOW_SCALE;
+constexpr int WINDOW_HEIGHT =
+  static_cast<int>(gbemu::SCREEN_HEIGHT) * WINDOW_SCALE;
 constexpr const char* WINDOW_TITLE = "gbemu";
 constexpr int TARGET_FPS = 60;
 constexpr double TARGET_FRAME_MS = 1000.0 / TARGET_FPS;
