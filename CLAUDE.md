@@ -164,6 +164,20 @@ exist - re-add `ENABLE_TESTS` wiring plus a `tests/` directory, then restore
 the `Run Tests`/`Generate Coverage Report`/`Upload Coverage to Codecov` steps
 `.github/workflows/ci.yml` had in `libgbemu` before trimming them here.
 
+**Known-harmless CMake diagnostic on `dev_ninja_clang_tidy`/other
+Windows+Clang presets**: `CMake Error: Disagreement of the location of the
+'std' module` printed 2-3 times during configure, referencing
+`external/libgbemu/src/CMakeFiles/gbemu.dir/std.pcm` vs.
+`src/CMakeFiles/gbemu-frontend.dir/std.pcm`. Cosmetic, not fatal (seen in a
+real CI run that built 28/36 targets past it and only failed on an unrelated
+`clang-tidy` finding) - it's `libgbemu`'s and this repo's `src/CMakeLists.txt`
+each independently attaching their own copy of the manual clang+MSVC-STL
+`std.ixx` workaround (see comment there) for their own target, which only
+matters here because this is the first time that workaround is shared by
+*two different targets* in one build rather than `libgbemu`'s usual
+single-target case. Worth revisiting if CMake ever escalates this from a
+diagnostic to a real error.
+
 ## Monitoring CI
 
 Same as `libgbemu` - `gh` is available and authenticated:

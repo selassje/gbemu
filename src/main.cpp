@@ -2,7 +2,7 @@ import std;
 import frontend;
 
 int
-main()
+main() // NOLINT(bugprone-exception-escape)
 {
   frontend::App app;
   const auto result = app.run();
