@@ -264,6 +264,19 @@
       "cacheVariables": {
         "ENABLE_MSVC_ANALYSIS": "ON"
       }
+    },
+    {
+      "name": "release_vs_msvc",
+      "displayName": "release (Visual Studio, MSVC)",
+      "inherits": "dev_windows",
+      "generator": "Visual Studio 18 2026",
+      "toolchainFile": "${sourceDir}/builds/release_vs_msvc/generators/conan_toolchain.cmake",
+      "cacheVariables": {
+        "CMAKE_CONFIGURATION_TYPES": "Release",
+        "CMAKE_EXPERIMENTAL_CXX_IMPORT_STD": "f35a9ac6-8463-4d38-8eec-5d6008153e7d",
+        "CMAKE_CXX_MODULE_STD": "OFF"
+      },
+      "binaryDir": "${sourceDir}/builds/release_vs_msvc/build"
     }
   ],
   "buildPresets": [
@@ -340,6 +353,11 @@
       "name": "dev_vs_msvc_analysis",
       "configurePreset": "dev_vs_msvc_analysis",
       "configuration": "Debug"
+    },
+    {
+      "name": "release_vs_msvc",
+      "configurePreset": "release_vs_msvc",
+      "configuration": "Release"
     }
   ],
   "testPresets": [
@@ -440,6 +458,12 @@
       "inherits": "default",
       "configurePreset": "dev_vs_msvc_analysis",
       "configuration": "Debug"
+    },
+    {
+      "name": "release_vs_msvc",
+      "inherits": "default",
+      "configurePreset": "release_vs_msvc",
+      "configuration": "Release"
     }
   ]
 }
