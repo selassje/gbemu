@@ -20,18 +20,14 @@ include(cmake/cmake_format.cmake)
 include(cmake/setup_static_analysis.cmake)
 include(cmake/coverage_report.cmake)
 
-# Vendored source, not a Conan package (yet) - see CLAUDE.md. Deliberately
-# add_subdirectory()'d at src/, not libgbemu's own root: its root CMakeLists.txt
-# include()s the very same cmake/clang_format.cmake and cmake/cmake_format.cmake
-# we already include()d above, which would then try to define the same global
-# clang-format/cmake-format targets twice (a hard CMake error) - and even
-# without that collision, CMAKE_SOURCE_DIR inside a nested add_subdirectory()
-# resolves to *our* root, not libgbemu's, so its copy of those scripts would
-# glob our files instead of its own anyway. Going straight to src/ skips all of
-# that; the setup_*() functions it calls are already in scope from our own
-# include()s above, and ENABLE_TESTS stays unset/OFF so libgbemu's own
-# Catch2/test-ROM machinery never builds as part of the frontend.
-add_subdirectory(external/libgbemu/src)
+# Vendored source, not a Conan package (yet) - see CLAUDE.md. libgbemu's own
+# root CMakeLists.txt guards its clang-format/cmake-format/coverage-report
+# target creation behind PROJECT_IS_TOP_LEVEL, so it's safe to
+# add_subdirectory() directly here without colliding with the identically-named
+# targets this repo's own cmake/clang_format.cmake etc. already define.
+# ENABLE_TESTS stays unset/OFF so libgbemu's own Catch2/test-ROM machinery never
+# builds as part of the frontend.
+add_subdirectory(external/libgbemu)
 
 add_subdirectory(src)
 

@@ -108,22 +108,24 @@ wrap a third-party C API. `src/main.cpp` is a plain non-module TU (`import
 frontend;`), matching `libgbemu`'s own pattern of keeping the module boundary
 at the "library" layer, not the entry point.
 
-**Submodule, not (yet) a Conan package.** `external/libgbemu/src` (not
-`external/libgbemu`'s own root) is `add_subdirectory()`'d from the top-level
-`CMakeLists.txt`. Deliberately src/, not the root: libgbemu's own root
-`CMakeLists.txt` `include()`s the identical `cmake/clang_format.cmake` /
-`cmake/cmake_format.cmake` this repo already includes at its own top level,
-which would try to define the same global `clang-format`/`cmake-format`
-targets twice (hard CMake error) - and separately, `CMAKE_SOURCE_DIR` inside
-a nested `add_subdirectory()` resolves to *this* repo's root, not libgbemu's,
-so libgbemu's own copy of those scripts would end up globbing this repo's
-files instead of its own even without the name collision. Going straight to
-`src/` sidesteps both: the `setup_*()` functions its `CMakeLists.txt` calls
-are already in scope from this repo's own `include()`s, and `ENABLE_TESTS`
-stays unset/off so libgbemu's Catch2/test-ROM machinery never builds as part
-of the frontend (its root `CMakeLists.txt`, which gates `tests/` on that
-option, is never processed at all). A Conan-package path for `libgbemu` is
-possible later but intentionally not done now.
+**Submodule, not (yet) a Conan package.** `external/libgbemu` (its own root,
+not just `src/`) is `add_subdirectory()`'d from the top-level
+`CMakeLists.txt`. This works cleanly because libgbemu's own root
+`CMakeLists.txt` guards its `clang-format`/`cmake-format`/coverage-report
+target creation behind CMake's built-in `PROJECT_IS_TOP_LEVEL` (auto-set by
+`project()`, true only when a project is the outermost one being configured):
+without that guard, its `include(cmake/clang_format.cmake)` etc. would try to
+define the same global `clang-format`/`cmake-format` targets this repo's own
+top-level already defines (hard CMake error), and separately
+`CMAKE_SOURCE_DIR` inside a nested `add_subdirectory()` resolves to *this*
+repo's root, not libgbemu's, so its copy of those scripts would glob this
+repo's files instead of its own even without the name collision. That guard
+lives in `external/libgbemu/CMakeLists.txt` itself - a change to the
+submodule's own repo, committed/pushed there separately from this repo's
+history, not something this repo's `.git` tracks. `ENABLE_TESTS` stays
+unset/off here so libgbemu's Catch2/test-ROM machinery never builds as part
+of the frontend. A Conan-package path for `libgbemu` is possible later but
+intentionally not done now.
 
 **Why `cmake/coverage_report.cmake` differs from `libgbemu`'s copy**: it
 originally does `get_property(... DIRECTORY ${CMAKE_SOURCE_DIR}/tests ...)`,
