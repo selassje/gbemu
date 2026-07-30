@@ -30,6 +30,33 @@ constexpr const char* WINDOW_TITLE = "gbemu";
 constexpr int TARGET_FPS = 60;
 constexpr double TARGET_FRAME_MS = 1000.0 / TARGET_FPS;
 
+// Fixed physical-key layout (scancode-based, so it stays put regardless of
+// keyboard locale/layout) - not user-configurable yet.
+std::optional<gbemu::Button>
+mapKey(SDL_Scancode scancode)
+{
+  switch (scancode) {
+    case SDL_SCANCODE_RIGHT:
+      return gbemu::Button::Right;
+    case SDL_SCANCODE_LEFT:
+      return gbemu::Button::Left;
+    case SDL_SCANCODE_UP:
+      return gbemu::Button::Up;
+    case SDL_SCANCODE_DOWN:
+      return gbemu::Button::Down;
+    case SDL_SCANCODE_X:
+      return gbemu::Button::A;
+    case SDL_SCANCODE_Z:
+      return gbemu::Button::B;
+    case SDL_SCANCODE_RETURN:
+      return gbemu::Button::Start;
+    case SDL_SCANCODE_BACKSPACE:
+      return gbemu::Button::Select;
+    default:
+      return std::nullopt;
+  }
+}
+
 }
 
 struct App::Impl
@@ -51,6 +78,15 @@ App::frameStep(void* userData)
   while (SDL_PollEvent(&event)) {
     if (event.type == SDL_EVENT_QUIT) {
       impl.running = false;
+    } else if (event.type == SDL_EVENT_KEY_DOWN ||
+               event.type == SDL_EVENT_KEY_UP) {
+      if (event.key.repeat) {
+        continue;
+      }
+      const auto button = mapKey(event.key.scancode);
+      if (button) {
+        impl.gameBoy.setButtonState(*button, event.type == SDL_EVENT_KEY_DOWN);
+      }
     }
   }
 
