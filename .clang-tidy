@@ -10,6 +10,7 @@ Checks: "*,
          -modernize-use-trailing-return-type,
          -readability-identifier-length,
          -llvm-prefer-static-over-anonymous-namespace,
+         -readability-redundant-declaration,
          -misc-include-cleaner,
          "
 CheckOptions:
