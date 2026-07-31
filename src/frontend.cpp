@@ -107,10 +107,12 @@ App::frameStep(void* userData)
     SDL_RenderTexture(impl.renderer, impl.texture, nullptr, nullptr);
     SDL_RenderPresent(impl.renderer);
 
-    const auto audioByteCount =
-      static_cast<int>(frame->audio.size() * sizeof(float));
-    SDL_PutAudioStreamData(
-      impl.audioStream, frame->audio.data_handle(), audioByteCount);
+    if (impl.audioStream != nullptr) {
+      const auto audioByteCount =
+        static_cast<int>(frame->audio.size() * sizeof(float));
+      SDL_PutAudioStreamData(
+        impl.audioStream, frame->audio.data_handle(), audioByteCount);
+    }
   }
 
 #ifdef __EMSCRIPTEN__
@@ -203,13 +205,18 @@ App::run(std::string_view romPath)
   m_impl->audioStream = SDL_OpenAudioDeviceStream(
     SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &audioSpec, nullptr, nullptr);
   if (m_impl->audioStream == nullptr) {
-    return std::unexpected(std::string("SDL_OpenAudioDeviceStream failed: ") +
-                           SDL_GetError());
+    // Not fatal: a missing/misconfigured audio device shouldn't prevent
+    // the emulator from running at all - fall back to silent operation
+    // (frameStep() skips SDL_PutAudioStreamData() when this is null).
+    std::cerr << "Warning: SDL_OpenAudioDeviceStream failed, running "
+                 "without audio: "
+              << SDL_GetError() << '\n';
+  } else {
+    // Streams bound to a device via SDL_OpenAudioDeviceStream start
+    // paused - without this, SDL_PutAudioStreamData()'s queued samples
+    // would never actually reach the device.
+    SDL_ResumeAudioStreamDevice(m_impl->audioStream);
   }
-  // Streams bound to a device via SDL_OpenAudioDeviceStream start paused -
-  // without this, SDL_PutAudioStreamData()'s queued samples would never
-  // actually reach the device.
-  SDL_ResumeAudioStreamDevice(m_impl->audioStream);
 
   // Emscripten: the browser owns the main loop (blocking here would freeze
   // the tab, since it never yields back to the JS event loop) and paces it
