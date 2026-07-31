@@ -64,6 +64,10 @@ struct App::Impl
   SDL_Window* window = nullptr;
   SDL_Renderer* renderer = nullptr;
   SDL_Texture* texture = nullptr;
+  // Bound directly to a playback device (see SDL_OpenAudioDeviceStream in
+  // run()) - pushing data via SDL_PutAudioStreamData is all that's needed
+  // per frame, SDL pulls from it into the device on its own.
+  SDL_AudioStream* audioStream = nullptr;
   gbemu::GameBoy gameBoy;
   bool running = true;
   std::optional<std::string> error;
@@ -102,6 +106,11 @@ App::frameStep(void* userData)
     SDL_RenderClear(impl.renderer);
     SDL_RenderTexture(impl.renderer, impl.texture, nullptr, nullptr);
     SDL_RenderPresent(impl.renderer);
+
+    const auto audioByteCount =
+      static_cast<int>(frame->audio.size() * sizeof(float));
+    SDL_PutAudioStreamData(
+      impl.audioStream, frame->audio.data_handle(), audioByteCount);
   }
 
 #ifdef __EMSCRIPTEN__
@@ -118,6 +127,12 @@ App::App()
 
 App::~App()
 {
+  if (m_impl->audioStream != nullptr) {
+    // Also closes the device it was opened alongside (see
+    // SDL_OpenAudioDeviceStream in run()) - no separate SDL_CloseAudioDevice
+    // call needed.
+    SDL_DestroyAudioStream(m_impl->audioStream);
+  }
   if (m_impl->texture != nullptr) {
     SDL_DestroyTexture(m_impl->texture);
   }
@@ -146,7 +161,7 @@ App::run(std::string_view romPath)
     return std::unexpected(loadResult.error());
   }
 
-  if (!SDL_Init(SDL_INIT_VIDEO)) {
+  if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO)) {
     return std::unexpected(std::string("SDL_Init failed: ") + SDL_GetError());
   }
 
@@ -176,6 +191,25 @@ App::run(std::string_view romPath)
   // native 160x144 framebuffer up 3x, and linear filtering blurs the pixel
   // art instead of keeping crisp per-pixel edges.
   SDL_SetTextureScaleMode(m_impl->texture, SDL_SCALEMODE_NEAREST);
+
+  // Matches EmulationFrame::audio's own layout exactly (see gbemu.cppm) -
+  // interleaved float stereo at gbemu::SAMPLE_RATE - so each frame's
+  // samples can be pushed to the stream as-is, no conversion needed.
+  const SDL_AudioSpec audioSpec = {
+    .format = SDL_AUDIO_F32,
+    .channels = 2,
+    .freq = static_cast<int>(gbemu::SAMPLE_RATE),
+  };
+  m_impl->audioStream = SDL_OpenAudioDeviceStream(
+    SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &audioSpec, nullptr, nullptr);
+  if (m_impl->audioStream == nullptr) {
+    return std::unexpected(std::string("SDL_OpenAudioDeviceStream failed: ") +
+                           SDL_GetError());
+  }
+  // Streams bound to a device via SDL_OpenAudioDeviceStream start paused -
+  // without this, SDL_PutAudioStreamData()'s queued samples would never
+  // actually reach the device.
+  SDL_ResumeAudioStreamDevice(m_impl->audioStream);
 
   // Emscripten: the browser owns the main loop (blocking here would freeze
   // the tab, since it never yields back to the JS event loop) and paces it
