@@ -85,7 +85,10 @@ struct App::Impl
   // per frame, SDL pulls from it into the device on its own.
   SDL_AudioStream* audioStream = nullptr;
   bool imguiInitialized = false;
-  gbemu::GameBoy gameBoy;
+  // Deferred (not default-constructed here) since GameBoy's console Mode
+  // is fixed at construction time and isn't known until run() receives
+  // it from the caller.
+  std::optional<gbemu::GameBoy> gameBoy;
   bool running = true;
   std::optional<std::string> error;
   // Written from SDL's file-dialog callback (see showOpenRomDialog below),
@@ -99,20 +102,23 @@ struct App::Impl
 #ifndef __EMSCRIPTEN__
 namespace {
 
-constexpr SDL_DialogFileFilter ROM_FILE_FILTERS[] = {
-  { "Game Boy ROM", "gb;gbc" },
-};
+constexpr std::array<SDL_DialogFileFilter, 1> ROM_FILE_FILTERS = { {
+  { .name = "Game Boy ROM", .pattern = "gb;gbc" },
+} };
 
 }
 
 void SDLCALL
-App::onRomFileChosen(void* userdata, const char* const* filelist, int)
+App::onRomFileChosen(void* userdata, const char* const* filelist, int filter)
 {
+  static_cast<void>(filter); // Unused: only one filter is offered.
+  // NOLINTNEXTLINE(cppcoreguidelines-pro-bounds-pointer-arithmetic)
   if (filelist == nullptr || filelist[0] == nullptr) {
     return; // Error, or the user canceled the dialog - nothing to load.
   }
   auto& impl = *static_cast<Impl*>(userdata);
-  const std::lock_guard lock{ impl.pendingRomPathMutex };
+  const std::scoped_lock lock{ impl.pendingRomPathMutex };
+  // NOLINTNEXTLINE(cppcoreguidelines-pro-bounds-pointer-arithmetic)
   impl.pendingRomPath = filelist[0];
 }
 
@@ -120,12 +126,55 @@ void
 App::showOpenRomDialog(Impl& impl)
 {
   SDL_ShowOpenFileDialog(onRomFileChosen,
-                        &impl,
-                        impl.window,
-                        ROM_FILE_FILTERS,
-                        static_cast<int>(std::size(ROM_FILE_FILTERS)),
-                        nullptr,
-                        false);
+                         &impl,
+                         impl.window,
+                         ROM_FILE_FILTERS.data(),
+                         static_cast<int>(ROM_FILE_FILTERS.size()),
+                         nullptr,
+                         false);
+}
+
+void
+App::loadPendingRom(Impl& impl)
+{
+  std::optional<std::string> romToLoad;
+  {
+    const std::scoped_lock lock{ impl.pendingRomPathMutex };
+    romToLoad = std::move(impl.pendingRomPath);
+    impl.pendingRomPath.reset();
+  }
+  if (!romToLoad) {
+    return;
+  }
+  const auto rom = readRomFile(*romToLoad);
+  if (!rom) {
+    std::cerr << "Warning: " << rom.error() << '\n';
+    // frameStep() only ever runs as run()'s main-loop callback, and
+    // run() always emplace()s gameBoy before entering that loop.
+    // NOLINTNEXTLINE(bugprone-unchecked-optional-access)
+  } else if (const auto loadResult = impl.gameBoy->loadRom(*rom); !loadResult) {
+    std::cerr << "Warning: failed to load ROM: " << loadResult.error() << '\n';
+  }
+}
+
+void
+App::renderImGuiFrame(Impl& impl)
+{
+  ImGui_ImplSDLRenderer3_NewFrame();
+  ImGui_ImplSDL3_NewFrame();
+  ImGui::NewFrame();
+
+  if (ImGui::BeginMainMenuBar()) {
+    if (ImGui::BeginMenu("File")) {
+      if (ImGui::MenuItem("Open ROM...", "Ctrl+O")) {
+        showOpenRomDialog(impl);
+      }
+      ImGui::EndMenu();
+    }
+    ImGui::EndMainMenuBar();
+  }
+
+  ImGui::Render();
 }
 #endif
 
@@ -135,24 +184,7 @@ App::frameStep(void* userData)
   auto& impl = *static_cast<Impl*>(userData);
 
 #ifndef __EMSCRIPTEN__
-  {
-    std::optional<std::string> romToLoad;
-    {
-      const std::lock_guard lock{ impl.pendingRomPathMutex };
-      romToLoad = std::move(impl.pendingRomPath);
-      impl.pendingRomPath.reset();
-    }
-    if (romToLoad) {
-      const auto rom = readRomFile(*romToLoad);
-      if (!rom) {
-        std::cerr << "Warning: " << rom.error() << '\n';
-      } else if (const auto loadResult = impl.gameBoy.loadRom(*rom);
-                 !loadResult) {
-        std::cerr << "Warning: failed to load ROM: " << loadResult.error()
-                  << '\n';
-      }
-    }
-  }
+  loadPendingRom(impl);
 #endif
 
   SDL_Event event;
@@ -175,30 +207,21 @@ App::frameStep(void* userData)
       }
       const auto button = mapKey(event.key.scancode);
       if (button) {
-        impl.gameBoy.setButtonState(*button, event.type == SDL_EVENT_KEY_DOWN);
+        // frameStep() only ever runs as run()'s main-loop callback, and
+        // run() always emplace()s gameBoy before entering that loop - see
+        // its own comment.
+        // NOLINTNEXTLINE(bugprone-unchecked-optional-access)
+        impl.gameBoy->setButtonState(*button, event.type == SDL_EVENT_KEY_DOWN);
       }
     }
   }
 
 #ifndef __EMSCRIPTEN__
-  ImGui_ImplSDLRenderer3_NewFrame();
-  ImGui_ImplSDL3_NewFrame();
-  ImGui::NewFrame();
-
-  if (ImGui::BeginMainMenuBar()) {
-    if (ImGui::BeginMenu("File")) {
-      if (ImGui::MenuItem("Open ROM...", "Ctrl+O")) {
-        showOpenRomDialog(impl);
-      }
-      ImGui::EndMenu();
-    }
-    ImGui::EndMainMenuBar();
-  }
-
-  ImGui::Render();
+  renderImGuiFrame(impl);
 #endif
 
-  const auto frame = impl.gameBoy.runNextFrame();
+  // NOLINTNEXTLINE(bugprone-unchecked-optional-access) - see above.
+  const auto frame = impl.gameBoy->runNextFrame();
   if (!frame) {
     impl.error = frame.error();
     impl.running = false;
@@ -262,14 +285,15 @@ App::~App()
 }
 
 std::expected<void, std::string>
-App::run(std::string_view romPath)
+App::run(std::string_view romPath, gbemu::Mode mode)
 {
   const auto rom = readRomFile(romPath);
   if (!rom) {
     return std::unexpected(rom.error());
   }
 
-  const auto loadResult = m_impl->gameBoy.loadRom(*rom);
+  m_impl->gameBoy.emplace(mode);
+  const auto loadResult = m_impl->gameBoy->loadRom(*rom);
   if (!loadResult) {
     return std::unexpected(loadResult.error());
   }
@@ -319,8 +343,7 @@ App::run(std::string_view romPath)
   if (!ImGui_ImplSDLRenderer3_Init(m_impl->renderer)) {
     ImGui_ImplSDL3_Shutdown();
     ImGui::DestroyContext();
-    return std::unexpected(
-      std::string("ImGui_ImplSDLRenderer3_Init failed"));
+    return std::unexpected(std::string("ImGui_ImplSDLRenderer3_Init failed"));
   }
   m_impl->imguiInitialized = true;
 #endif
