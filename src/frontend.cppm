@@ -1,6 +1,7 @@
 export module frontend;
 
 import std;
+import gbemu;
 
 export namespace frontend {
 
@@ -19,7 +20,8 @@ public:
   App(App&&) = delete;
   App& operator=(App&&) = delete;
 
-  [[nodiscard]] std::expected<void, std::string> run(std::string_view romPath);
+  [[nodiscard]] std::expected<void, std::string> run(std::string_view romPath,
+                                                     gbemu::Mode mode);
 
 private:
   struct Impl;

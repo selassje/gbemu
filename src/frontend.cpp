@@ -68,7 +68,10 @@ struct App::Impl
   // run()) - pushing data via SDL_PutAudioStreamData is all that's needed
   // per frame, SDL pulls from it into the device on its own.
   SDL_AudioStream* audioStream = nullptr;
-  gbemu::GameBoy gameBoy;
+  // Deferred (not default-constructed here) since GameBoy's console Mode
+  // is fixed at construction time and isn't known until run() receives
+  // it from the caller.
+  std::optional<gbemu::GameBoy> gameBoy;
   bool running = true;
   std::optional<std::string> error;
 };
@@ -89,12 +92,17 @@ App::frameStep(void* userData)
       }
       const auto button = mapKey(event.key.scancode);
       if (button) {
-        impl.gameBoy.setButtonState(*button, event.type == SDL_EVENT_KEY_DOWN);
+        // frameStep() only ever runs as run()'s main-loop callback, and
+        // run() always emplace()s gameBoy before entering that loop - see
+        // its own comment.
+        // NOLINTNEXTLINE(bugprone-unchecked-optional-access)
+        impl.gameBoy->setButtonState(*button, event.type == SDL_EVENT_KEY_DOWN);
       }
     }
   }
 
-  const auto frame = impl.gameBoy.runNextFrame();
+  // NOLINTNEXTLINE(bugprone-unchecked-optional-access) - see above.
+  const auto frame = impl.gameBoy->runNextFrame();
   if (!frame) {
     impl.error = frame.error();
     impl.running = false;
@@ -148,7 +156,7 @@ App::~App()
 }
 
 std::expected<void, std::string>
-App::run(std::string_view romPath)
+App::run(std::string_view romPath, gbemu::Mode mode)
 {
   std::ifstream file{ std::filesystem::path(romPath), std::ios::binary };
   if (!file) {
@@ -158,7 +166,8 @@ App::run(std::string_view romPath)
   const std::vector<std::uint8_t> rom{ std::istreambuf_iterator<char>(file),
                                        std::istreambuf_iterator<char>() };
 
-  const auto loadResult = m_impl->gameBoy.loadRom(rom);
+  m_impl->gameBoy.emplace(mode);
+  const auto loadResult = m_impl->gameBoy->loadRom(rom);
   if (!loadResult) {
     return std::unexpected(loadResult.error());
   }
