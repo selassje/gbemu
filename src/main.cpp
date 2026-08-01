@@ -35,9 +35,26 @@ main(int argc, char** argv) // NOLINT(bugprone-exception-escape)
   // argc is always >= 1 per the standard, so args[0] is always valid.
   const std::string_view programName =
     args[0]; // NOLINT(*-bounds-avoid-unchecked-container-access)
-  if (argc < 2) {
-    std::cerr << "usage: " << programName << " <rom-file> [auto|dmg|cgb]\n";
+  // The ROM path is optional: with none given, App::run() falls back to a
+  // built-in placeholder ROM so the window/menu still comes up, and a real
+  // ROM can be picked afterwards via File > Open ROM.
+  if (argc > 3) {
+    std::cerr << "usage: " << programName << " [rom-file] [auto|dmg|cgb]\n";
     return 1;
+  }
+
+  std::optional<std::string_view> romPath;
+  if (argc >= 2) {
+    romPath = args[1]; // NOLINT(*-bounds-avoid-unchecked-container-access)
+    // A lone argument that's itself a mode keyword ("gbemu cgb") is almost
+    // certainly a mistake, not a ROM genuinely named "cgb" - the mode
+    // positional only makes sense following a ROM path, so reject it with
+    // the same usage error rather than silently trying (and failing) to
+    // open a file by that name.
+    if (argc == 2 && parseMode(*romPath)) {
+      std::cerr << "usage: " << programName << " [rom-file] [auto|dmg|cgb]\n";
+      return 1;
+    }
   }
 
   auto mode = gbemu::Mode::Auto;
@@ -45,17 +62,14 @@ main(int argc, char** argv) // NOLINT(bugprone-exception-escape)
     // NOLINTNEXTLINE(*-bounds-avoid-unchecked-container-access)
     const auto parsedMode = parseMode(args[2]);
     if (!parsedMode) {
-      std::cerr << "usage: " << programName << " <rom-file> [auto|dmg|cgb]\n";
+      std::cerr << "usage: " << programName << " [rom-file] [auto|dmg|cgb]\n";
       return 1;
     }
     mode = *parsedMode;
   }
 
   frontend::App app;
-  // argc >= 2 is checked above, so args[1] is always valid.
-  const auto result =
-    app.run(args[1], // NOLINT(*-bounds-avoid-unchecked-container-access)
-            mode);
+  const auto result = app.run(romPath, mode);
   if (!result) {
     std::cerr << result.error() << '\n';
     return 1;

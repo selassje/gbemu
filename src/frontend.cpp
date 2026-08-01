@@ -73,6 +73,41 @@ readRomFile(std::string_view romPath)
                                     std::istreambuf_iterator<char>() };
 }
 
+// Stands in for a real cartridge when run() is given no ROM path, so the
+// window/menu bar still comes up and File > Open ROM can be used to load one.
+// gbemu::Mmu::loadRom only rejects buffers smaller than 0x150 bytes and reads
+// the cartridge-type byte at 0x147 (0 here: no MBC) - nothing else in the
+// header (Nintendo logo, checksum, ROM-size byte) is checked. Sized to
+// 0x4000 (one full ROM bank), not just the 0x150 minimum, so every address
+// in 0x0000-0x7FFF resolves without an out-of-range bank access.
+//
+// CGB flag 0x0143 is deliberately set to CGB-supported (0x80), not left at
+// the DMG default: whichever boot ROM runs always draws its own hardcoded
+// logo/trademark tiles before handing off, regardless of cartridge content
+// (see boot_rom.cpp) - not "fixed" here by embedding Nintendo's actual
+// copyrighted logo bitmap into 0x104-0x133 just to complete the picture. The
+// DMG boot ROM leaves its trademark tile sitting in the tilemap forever once
+// it hands off (nothing clears it - confirmed by disassembly); the CGB boot
+// ROM's own final steps clear the whole screen before disabling itself
+// (confirmed empirically: 300 frames past boot, with nothing but an infinite
+// self-jump at $0150, renders a single uniform white pixel buffer). Using
+// the CGB boot path here avoids needing to hand-roll that same cleanup
+// ourselves. This only affects the placeholder cartridge - GameBoy::loadRom
+// recomputes hardware mode fresh from each ROM's own header, so a real DMG
+// or CGB ROM opened afterward via File > Open ROM is unaffected by this.
+constexpr std::size_t PLACEHOLDER_ROM_SIZE = 0x4000;
+constexpr std::array<std::uint8_t, PLACEHOLDER_ROM_SIZE>
+makePlaceholderRom()
+{
+  std::array<std::uint8_t, PLACEHOLDER_ROM_SIZE> rom{};
+  rom.at(0x100) = 0xC3; // JP $0100 - infinite no-op loop, run once booted
+  rom.at(0x101) = 0x00;
+  rom.at(0x102) = 0x01;
+  rom.at(0x143) = 0x80; // CGB flag: CGB-supported (see comment above)
+  return rom;
+}
+constexpr auto PLACEHOLDER_ROM = makePlaceholderRom();
+
 }
 
 struct App::Impl
@@ -285,15 +320,21 @@ App::~App()
 }
 
 std::expected<void, std::string>
-App::run(std::string_view romPath, gbemu::Mode mode)
+App::run(std::optional<std::string_view> romPath, gbemu::Mode mode)
 {
-  const auto rom = readRomFile(romPath);
-  if (!rom) {
-    return std::unexpected(rom.error());
+  std::vector<std::uint8_t> romFileBuffer;
+  std::span<const std::uint8_t> rom = PLACEHOLDER_ROM;
+  if (romPath) {
+    auto result = readRomFile(*romPath);
+    if (!result) {
+      return std::unexpected(result.error());
+    }
+    romFileBuffer = std::move(*result);
+    rom = romFileBuffer;
   }
 
   m_impl->gameBoy.emplace(mode);
-  const auto loadResult = m_impl->gameBoy->loadRom(*rom);
+  const auto loadResult = m_impl->gameBoy->loadRom(rom);
   if (!loadResult) {
     return std::unexpected(loadResult.error());
   }
