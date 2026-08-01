@@ -30,7 +30,10 @@ constexpr int WINDOW_WIDTH =
   static_cast<int>(gbemu::SCREEN_WIDTH) * WINDOW_SCALE;
 constexpr int WINDOW_HEIGHT =
   static_cast<int>(gbemu::SCREEN_HEIGHT) * WINDOW_SCALE;
-constexpr const char* WINDOW_TITLE = "gbemu";
+constexpr const char* WINDOW_TITLE = "Gbemu";
+// A little breathing room below the menu bar (see Impl::menuBarHeight) so
+// the Game Boy screen isn't directly adjacent to it.
+constexpr float MENU_BAR_GAP = 0.0F;
 constexpr int TARGET_FPS = 60;
 constexpr double TARGET_FRAME_MS = 1000.0 / TARGET_FPS;
 
@@ -132,6 +135,11 @@ struct App::Impl
   // ROM straight from that callback's thread.
   std::mutex pendingRomPathMutex;
   std::optional<std::string> pendingRomPath;
+  // 0 on Emscripten (no menu bar there) - set once during run()'s ImGui
+  // init on native builds, to how tall the main menu bar actually rendered
+  // plus MENU_BAR_GAP, so the Game Boy screen can be drawn just below it
+  // instead of the menu bar covering (or touching) its top rows.
+  float menuBarHeight = 0.0F;
 };
 
 #ifndef __EMSCRIPTEN__
@@ -266,7 +274,16 @@ App::frameStep(void* userData)
                       frame->pixels.data_handle(),
                       static_cast<int>(gbemu::SCREEN_WIDTH * 3));
     SDL_RenderClear(impl.renderer);
-    SDL_RenderTexture(impl.renderer, impl.texture, nullptr, nullptr);
+    // Drawn below the menu bar (impl.menuBarHeight, 0 on Emscripten - see
+    // Impl::menuBarHeight), not stretched to fill the whole window, so the
+    // menu bar never covers the Game Boy screen's top rows.
+    const SDL_FRect destRect = {
+      .x = 0.0F,
+      .y = impl.menuBarHeight,
+      .w = static_cast<float>(WINDOW_WIDTH),
+      .h = static_cast<float>(WINDOW_HEIGHT),
+    };
+    SDL_RenderTexture(impl.renderer, impl.texture, nullptr, &destRect);
 #ifndef __EMSCRIPTEN__
     ImGui_ImplSDLRenderer3_RenderDrawData(ImGui::GetDrawData(), impl.renderer);
 #endif
@@ -387,6 +404,22 @@ App::run(std::optional<std::string_view> romPath, gbemu::Mode mode)
     return std::unexpected(std::string("ImGui_ImplSDLRenderer3_Init failed"));
   }
   m_impl->imguiInitialized = true;
+
+  // A throwaway frame, rendering nothing: ImGui only loads its default font
+  // (and so only reports real metrics from GetFrameHeight()) once a frame
+  // has actually started, so this runs before the window is sized - sizing
+  // it any earlier would see FontSize still at 0 and undersize the window,
+  // leaving the real menu bar covering the Game Boy screen's top rows after
+  // all.
+  ImGui_ImplSDLRenderer3_NewFrame();
+  ImGui_ImplSDL3_NewFrame();
+  ImGui::NewFrame();
+  ImGui::EndFrame();
+  m_impl->menuBarHeight = ImGui::GetFrameHeight() + MENU_BAR_GAP;
+  SDL_SetWindowSize(m_impl->window,
+                    WINDOW_WIDTH,
+                    WINDOW_HEIGHT +
+                      static_cast<int>(std::ceil(m_impl->menuBarHeight)));
 #endif
 
   // Matches EmulationFrame::audio's own layout exactly (see gbemu.cppm) -
