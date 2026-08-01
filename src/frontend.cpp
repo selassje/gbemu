@@ -11,6 +11,10 @@ module;
 
 #ifdef __EMSCRIPTEN__
 #include <emscripten/emscripten.h>
+#else
+#include <imgui.h>
+#include <imgui_impl_sdl3.h>
+#include <imgui_impl_sdlrenderer3.h>
 #endif
 
 module frontend;
@@ -57,6 +61,18 @@ mapKey(SDL_Scancode scancode)
   }
 }
 
+std::expected<std::vector<std::uint8_t>, std::string>
+readRomFile(std::string_view romPath)
+{
+  std::ifstream file{ std::filesystem::path(romPath), std::ios::binary };
+  if (!file) {
+    return std::unexpected(std::string("failed to open ROM file: ") +
+                           std::string(romPath));
+  }
+  return std::vector<std::uint8_t>{ std::istreambuf_iterator<char>(file),
+                                    std::istreambuf_iterator<char>() };
+}
+
 }
 
 struct App::Impl
@@ -68,20 +84,90 @@ struct App::Impl
   // run()) - pushing data via SDL_PutAudioStreamData is all that's needed
   // per frame, SDL pulls from it into the device on its own.
   SDL_AudioStream* audioStream = nullptr;
+  bool imguiInitialized = false;
   gbemu::GameBoy gameBoy;
   bool running = true;
   std::optional<std::string> error;
+  // Written from SDL's file-dialog callback (see showOpenRomDialog below),
+  // which SDL may invoke from a thread other than this one - guarded so
+  // frameStep() can safely pick it up once per frame instead of loading the
+  // ROM straight from that callback's thread.
+  std::mutex pendingRomPathMutex;
+  std::optional<std::string> pendingRomPath;
 };
+
+#ifndef __EMSCRIPTEN__
+namespace {
+
+constexpr SDL_DialogFileFilter ROM_FILE_FILTERS[] = {
+  { "Game Boy ROM", "gb;gbc" },
+};
+
+}
+
+void SDLCALL
+App::onRomFileChosen(void* userdata, const char* const* filelist, int)
+{
+  if (filelist == nullptr || filelist[0] == nullptr) {
+    return; // Error, or the user canceled the dialog - nothing to load.
+  }
+  auto& impl = *static_cast<Impl*>(userdata);
+  const std::lock_guard lock{ impl.pendingRomPathMutex };
+  impl.pendingRomPath = filelist[0];
+}
+
+void
+App::showOpenRomDialog(Impl& impl)
+{
+  SDL_ShowOpenFileDialog(onRomFileChosen,
+                        &impl,
+                        impl.window,
+                        ROM_FILE_FILTERS,
+                        static_cast<int>(std::size(ROM_FILE_FILTERS)),
+                        nullptr,
+                        false);
+}
+#endif
 
 void
 App::frameStep(void* userData)
 {
   auto& impl = *static_cast<Impl*>(userData);
 
+#ifndef __EMSCRIPTEN__
+  {
+    std::optional<std::string> romToLoad;
+    {
+      const std::lock_guard lock{ impl.pendingRomPathMutex };
+      romToLoad = std::move(impl.pendingRomPath);
+      impl.pendingRomPath.reset();
+    }
+    if (romToLoad) {
+      const auto rom = readRomFile(*romToLoad);
+      if (!rom) {
+        std::cerr << "Warning: " << rom.error() << '\n';
+      } else if (const auto loadResult = impl.gameBoy.loadRom(*rom);
+                 !loadResult) {
+        std::cerr << "Warning: failed to load ROM: " << loadResult.error()
+                  << '\n';
+      }
+    }
+  }
+#endif
+
   SDL_Event event;
   while (SDL_PollEvent(&event)) {
+#ifndef __EMSCRIPTEN__
+    ImGui_ImplSDL3_ProcessEvent(&event);
+#endif
     if (event.type == SDL_EVENT_QUIT) {
       impl.running = false;
+#ifndef __EMSCRIPTEN__
+    } else if (event.type == SDL_EVENT_KEY_DOWN && !event.key.repeat &&
+               event.key.scancode == SDL_SCANCODE_O &&
+               (event.key.mod & SDL_KMOD_CTRL) != 0) {
+      showOpenRomDialog(impl);
+#endif
     } else if (event.type == SDL_EVENT_KEY_DOWN ||
                event.type == SDL_EVENT_KEY_UP) {
       if (event.key.repeat) {
@@ -94,6 +180,24 @@ App::frameStep(void* userData)
     }
   }
 
+#ifndef __EMSCRIPTEN__
+  ImGui_ImplSDLRenderer3_NewFrame();
+  ImGui_ImplSDL3_NewFrame();
+  ImGui::NewFrame();
+
+  if (ImGui::BeginMainMenuBar()) {
+    if (ImGui::BeginMenu("File")) {
+      if (ImGui::MenuItem("Open ROM...", "Ctrl+O")) {
+        showOpenRomDialog(impl);
+      }
+      ImGui::EndMenu();
+    }
+    ImGui::EndMainMenuBar();
+  }
+
+  ImGui::Render();
+#endif
+
   const auto frame = impl.gameBoy.runNextFrame();
   if (!frame) {
     impl.error = frame.error();
@@ -105,6 +209,9 @@ App::frameStep(void* userData)
                       static_cast<int>(gbemu::SCREEN_WIDTH * 3));
     SDL_RenderClear(impl.renderer);
     SDL_RenderTexture(impl.renderer, impl.texture, nullptr, nullptr);
+#ifndef __EMSCRIPTEN__
+    ImGui_ImplSDLRenderer3_RenderDrawData(ImGui::GetDrawData(), impl.renderer);
+#endif
     SDL_RenderPresent(impl.renderer);
 
     if (impl.audioStream != nullptr) {
@@ -129,6 +236,13 @@ App::App()
 
 App::~App()
 {
+#ifndef __EMSCRIPTEN__
+  if (m_impl->imguiInitialized) {
+    ImGui_ImplSDLRenderer3_Shutdown();
+    ImGui_ImplSDL3_Shutdown();
+    ImGui::DestroyContext();
+  }
+#endif
   if (m_impl->audioStream != nullptr) {
     // Also closes the device it was opened alongside (see
     // SDL_OpenAudioDeviceStream in run()) - no separate SDL_CloseAudioDevice
@@ -150,15 +264,12 @@ App::~App()
 std::expected<void, std::string>
 App::run(std::string_view romPath)
 {
-  std::ifstream file{ std::filesystem::path(romPath), std::ios::binary };
-  if (!file) {
-    return std::unexpected(std::string("failed to open ROM file: ") +
-                           std::string(romPath));
+  const auto rom = readRomFile(romPath);
+  if (!rom) {
+    return std::unexpected(rom.error());
   }
-  const std::vector<std::uint8_t> rom{ std::istreambuf_iterator<char>(file),
-                                       std::istreambuf_iterator<char>() };
 
-  const auto loadResult = m_impl->gameBoy.loadRom(rom);
+  const auto loadResult = m_impl->gameBoy.loadRom(*rom);
   if (!loadResult) {
     return std::unexpected(loadResult.error());
   }
@@ -193,6 +304,26 @@ App::run(std::string_view romPath)
   // native 160x144 framebuffer up 3x, and linear filtering blurs the pixel
   // art instead of keeping crisp per-pixel edges.
   SDL_SetTextureScaleMode(m_impl->texture, SDL_SCALEMODE_NEAREST);
+
+#ifndef __EMSCRIPTEN__
+  IMGUI_CHECKVERSION();
+  ImGui::CreateContext();
+  // No imgui.ini for a single always-present menu bar - there's no window
+  // layout worth persisting between runs.
+  ImGui::GetIO().IniFilename = nullptr;
+  if (!ImGui_ImplSDL3_InitForSDLRenderer(m_impl->window, m_impl->renderer)) {
+    ImGui::DestroyContext();
+    return std::unexpected(
+      std::string("ImGui_ImplSDL3_InitForSDLRenderer failed"));
+  }
+  if (!ImGui_ImplSDLRenderer3_Init(m_impl->renderer)) {
+    ImGui_ImplSDL3_Shutdown();
+    ImGui::DestroyContext();
+    return std::unexpected(
+      std::string("ImGui_ImplSDLRenderer3_Init failed"));
+  }
+  m_impl->imguiInitialized = true;
+#endif
 
   // Matches EmulationFrame::audio's own layout exactly (see gbemu.cppm) -
   // interleaved float stereo at gbemu::SAMPLE_RATE - so each frame's

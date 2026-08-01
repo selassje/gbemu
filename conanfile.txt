@@ -1,5 +1,13 @@
 [requires]
 sdl/3.4.8
+imgui/1.92.8
+
+[options]
+# Compiles imgui's SDL3 platform/event backend (imgui_impl_sdl3) straight
+# into imgui::imgui - the SDL_Renderer backend still has to be compiled by
+# us (see src/CMakeLists.txt), the recipe doesn't offer an option for that
+# one.
+imgui/*:with_sdl3_binding=True
 
 [generators]
 CMakeDeps

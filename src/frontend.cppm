@@ -29,6 +29,15 @@ private:
   // the emscripten_set_main_loop_arg callback, which requires a plain
   // void(*)(void*), not a bound member function.
   static void frameStep(void* userData);
+
+  // Also plain-free-function shaped (SDL_ShowOpenFileDialog needs a
+  // SDL_DialogFileCallback, not a bound member function) - static rather
+  // than free functions in frontend.cpp only because Impl is private, and
+  // these need to reach into it.
+  static void showOpenRomDialog(Impl& impl);
+  static void onRomFileChosen(void* userdata,
+                              const char* const* filelist,
+                              int filter);
 };
 
 }
