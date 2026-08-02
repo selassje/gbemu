@@ -33,23 +33,29 @@ constexpr int WINDOW_HEIGHT =
 constexpr const char* WINDOW_TITLE = "Gbemu";
 #ifdef __EMSCRIPTEN__
 // Only used as the (browser-driven) fps hint for emscripten_set_main_loop_arg
-// in run() - not involved in native pacing, see TARGET_FRAME_MS below.
+// in run() - an upper bound on how often the browser invokes frameStep, not
+// the actual emulation rate (see Impl::framesEmulated in frameStep() for
+// why those two are kept separate).
 constexpr int TARGET_FPS = 60;
 #else
 // A little breathing room below the menu bar (see Impl::menuBarHeight) so
 // the Game Boy screen isn't directly adjacent to it.
 constexpr float MENU_BAR_GAP = 0.0F;
+#endif
 // The real Game Boy refresh rate - 4194304 Hz CPU clock / 70224 T-cycles per
-// frame - which is ~59.7275 Hz, not exactly 60. Emscripten paces frames
-// itself (see emscripten_set_main_loop_arg in run()) - only the native
-// manual-loop path needs its own per-frame delay budget, and it needs to be
-// paced against the *real* GB frame duration: pacing at a flat 60 Hz would
-// produce video frames (and their fixed-size audio chunks - see
-// gbemu::Apu::SAMPLE_RATE) very slightly faster than real GB time, which
-// would otherwise let the audio stream's queue (see AUDIO_MAX_QUEUED_BYTES)
-// slowly build up a backlog over a long play session.
+// frame - which is ~59.7275 Hz, not exactly 60. Both native and Emscripten
+// need to pace *emulation* (i.e. gbemu::GameBoy::runNextFrame() calls, and
+// the fixed-size audio chunk each one produces - see gbemu::Apu::SAMPLE_RATE)
+// against this real rate rather than a flat 60 Hz: running frames faster
+// than real GB time produces audio faster than real time too, which lets the
+// audio stream's queue slowly build up a backlog and drift further behind
+// video the longer a session runs. Native enforces this directly (see the
+// SDL_Delay loop in run()); Emscripten can't block its callback the same way
+// (see frameStep()'s own use of this), so it uses this same constant to
+// decide when a callback is *due* to actually emulate a frame instead.
 constexpr double GB_REFRESH_RATE_HZ = 4194304.0 / 70224.0;
 constexpr double TARGET_FRAME_MS = 1000.0 / GB_REFRESH_RATE_HZ;
+#ifndef __EMSCRIPTEN__
 // Upper bound on how much unplayed audio is allowed to sit in the SDL audio
 // stream's internal queue before it gets dropped and resynced (see
 // frameStep()) - native frame pacing (TARGET_FRAME_MS above) and the audio
@@ -388,6 +394,14 @@ struct App::Impl
   // plus MENU_BAR_GAP, so the Game Boy screen can be drawn just below it
   // instead of the menu bar covering (or touching) its top rows.
   float menuBarHeight = 0.0F;
+#ifdef __EMSCRIPTEN__
+  // Wall-clock accumulator driving frameStep()'s emulation gate - see its
+  // own comment. emulationStartTicks is set from the first frameStep() call
+  // (framesEmulated == 0), not from run(), so the pacing baseline is the
+  // first real callback rather than however long SDL/ImGui setup took.
+  Uint64 emulationStartTicks = 0;
+  std::uint64_t framesEmulated = 0;
+#endif
 };
 
 #ifndef __EMSCRIPTEN__
@@ -535,49 +549,79 @@ App::frameStep(void* userData)
 
 #ifndef __EMSCRIPTEN__
   renderImGuiFrame(impl);
+  constexpr bool shouldEmulateFrame = true;
+#else
+  // The browser invokes this callback at its own pace (TARGET_FPS is only an
+  // upper-bound hint - see its own comment), which doesn't line up with the
+  // real GB refresh rate (GB_REFRESH_RATE_HZ, ~59.7275 Hz vs. a typical 60 Hz
+  // display). Emulating (and pushing a GB frame's worth of audio) on every
+  // single callback would therefore produce audio slightly faster than real
+  // time, and - with nothing bounding the resulting backlog on this platform
+  // (see AUDIO_MAX_QUEUED_BYTES's own comment on why that fix isn't reused
+  // here) - it would drift further behind video the longer a session runs.
+  // Instead of emulating unconditionally, only do so once real elapsed time
+  // (tracked independently of the callback rate, so this self-corrects
+  // rather than accumulating the same kind of drift it's meant to prevent)
+  // justifies another GB frame; other callbacks just redraw nothing new,
+  // leaving the previous frame on screen a beat longer, which isn't
+  // noticeable at these rates.
+  if (impl.framesEmulated == 0) {
+    impl.emulationStartTicks = SDL_GetTicks();
+  }
+  const auto elapsedMs =
+    static_cast<double>(SDL_GetTicks() - impl.emulationStartTicks);
+  const auto dueFrameCount =
+    static_cast<std::uint64_t>(elapsedMs / TARGET_FRAME_MS) + 1;
+  const bool shouldEmulateFrame = impl.framesEmulated < dueFrameCount;
 #endif
 
-  // NOLINTNEXTLINE(bugprone-unchecked-optional-access) - see above.
-  const auto frame = impl.gameBoy->runNextFrame();
-  if (!frame) {
-    impl.error = frame.error();
-    impl.running = false;
-  } else {
-    SDL_UpdateTexture(impl.texture,
-                      nullptr,
-                      frame->pixels.data_handle(),
-                      static_cast<int>(gbemu::SCREEN_WIDTH * 3));
-    SDL_RenderClear(impl.renderer);
-    // Drawn below the menu bar (impl.menuBarHeight, 0 on Emscripten - see
-    // Impl::menuBarHeight), not stretched to fill the whole window, so the
-    // menu bar never covers the Game Boy screen's top rows.
-    const SDL_FRect destRect = {
-      .x = 0.0F,
-      .y = impl.menuBarHeight,
-      .w = static_cast<float>(WINDOW_WIDTH),
-      .h = static_cast<float>(WINDOW_HEIGHT),
-    };
-    SDL_RenderTexture(impl.renderer, impl.texture, nullptr, &destRect);
-#ifndef __EMSCRIPTEN__
-    ImGui_ImplSDLRenderer3_RenderDrawData(ImGui::GetDrawData(), impl.renderer);
+  if (shouldEmulateFrame) {
+#ifdef __EMSCRIPTEN__
+    ++impl.framesEmulated;
 #endif
-    SDL_RenderPresent(impl.renderer);
-
-    if (impl.audioStream != nullptr) {
+    // NOLINTNEXTLINE(bugprone-unchecked-optional-access) - see above.
+    const auto frame = impl.gameBoy->runNextFrame();
+    if (!frame) {
+      impl.error = frame.error();
+      impl.running = false;
+    } else {
+      SDL_UpdateTexture(impl.texture,
+                        nullptr,
+                        frame->pixels.data_handle(),
+                        static_cast<int>(gbemu::SCREEN_WIDTH * 3));
+      SDL_RenderClear(impl.renderer);
+      // Drawn below the menu bar (impl.menuBarHeight, 0 on Emscripten - see
+      // Impl::menuBarHeight), not stretched to fill the whole window, so the
+      // menu bar never covers the Game Boy screen's top rows.
+      const SDL_FRect destRect = {
+        .x = 0.0F,
+        .y = impl.menuBarHeight,
+        .w = static_cast<float>(WINDOW_WIDTH),
+        .h = static_cast<float>(WINDOW_HEIGHT),
+      };
+      SDL_RenderTexture(impl.renderer, impl.texture, nullptr, &destRect);
 #ifndef __EMSCRIPTEN__
-      // Bound the stream's internal backlog before adding this frame's
-      // samples to it - see AUDIO_MAX_QUEUED_BYTES's own comment for why
-      // this can otherwise grow without limit, and for why this is
-      // native-only.
-      if (SDL_GetAudioStreamQueued(impl.audioStream) > AUDIO_MAX_QUEUED_BYTES) {
-        SDL_ClearAudioStream(impl.audioStream);
+      ImGui_ImplSDLRenderer3_RenderDrawData(ImGui::GetDrawData(), impl.renderer);
+#endif
+      SDL_RenderPresent(impl.renderer);
+
+      if (impl.audioStream != nullptr) {
+#ifndef __EMSCRIPTEN__
+        // Bound the stream's internal backlog before adding this frame's
+        // samples to it - see AUDIO_MAX_QUEUED_BYTES's own comment for why
+        // this can otherwise grow without limit, and for why this is
+        // native-only.
+        if (SDL_GetAudioStreamQueued(impl.audioStream) >
+            AUDIO_MAX_QUEUED_BYTES) {
+          SDL_ClearAudioStream(impl.audioStream);
+        }
+#endif
+
+        const auto audioByteCount =
+          static_cast<int>(frame->audio.size() * sizeof(float));
+        SDL_PutAudioStreamData(
+          impl.audioStream, frame->audio.data_handle(), audioByteCount);
       }
-#endif
-
-      const auto audioByteCount =
-        static_cast<int>(frame->audio.size() * sizeof(float));
-      SDL_PutAudioStreamData(
-        impl.audioStream, frame->audio.data_handle(), audioByteCount);
     }
   }
 
