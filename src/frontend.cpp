@@ -49,18 +49,27 @@ constexpr float MENU_BAR_GAP = 0.0F;
 // slowly build up a backlog over a long play session.
 constexpr double GB_REFRESH_RATE_HZ = 4194304.0 / 70224.0;
 constexpr double TARGET_FRAME_MS = 1000.0 / GB_REFRESH_RATE_HZ;
-#endif
 // Upper bound on how much unplayed audio is allowed to sit in the SDL audio
 // stream's internal queue before it gets dropped and resynced (see
-// frameStep()) - native frame pacing (TARGET_FRAME_MS) and the audio
+// frameStep()) - native frame pacing (TARGET_FRAME_MS above) and the audio
 // device's own playback clock are two independent clocks with no hard sync
 // between them, so even a small mismatch would otherwise let queued audio
 // grow without bound and drift further behind video the longer a session
 // runs. ~100ms: generous enough to absorb ordinary frame-to-frame jitter
 // without audible dropouts, small enough that a listener won't notice the
 // lag building up to this point before it gets cut.
+//
+// Native-only: Emscripten's own main-loop pacing (emscripten_set_main_loop_arg,
+// browser-driven) and its SDL3 audio backend's buffering characteristics are
+// different enough from native's that this same threshold isn't safe to
+// reuse there untested - tried once, and it made wasm audio drop most of its
+// queued backlog on nearly every frame instead of only during genuine drift,
+// which sounded like audio playing sped-up/skipping rather than delayed.
+// Revisit with a wasm-appropriate threshold (verified in an actual browser,
+// not reasoned about the same way native's was) rather than reusing this one.
 constexpr int AUDIO_MAX_QUEUED_BYTES =
   static_cast<int>(gbemu::SAMPLE_RATE) * 2 * sizeof(float) / 10;
+#endif
 
 // Fixed physical-key layout (scancode-based, so it stays put regardless of
 // keyboard locale/layout) - not user-configurable yet.
@@ -554,12 +563,15 @@ App::frameStep(void* userData)
     SDL_RenderPresent(impl.renderer);
 
     if (impl.audioStream != nullptr) {
+#ifndef __EMSCRIPTEN__
       // Bound the stream's internal backlog before adding this frame's
       // samples to it - see AUDIO_MAX_QUEUED_BYTES's own comment for why
-      // this can otherwise grow without limit.
+      // this can otherwise grow without limit, and for why this is
+      // native-only.
       if (SDL_GetAudioStreamQueued(impl.audioStream) > AUDIO_MAX_QUEUED_BYTES) {
         SDL_ClearAudioStream(impl.audioStream);
       }
+#endif
 
       const auto audioByteCount =
         static_cast<int>(frame->audio.size() * sizeof(float));
