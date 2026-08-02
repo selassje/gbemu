@@ -154,17 +154,30 @@ input[type="file"] {
 }
 
 /* Emulator screen */
-#main canvas {
+/* The canvas element itself must carry NO box-affecting CSS at all -
+   width/height/max-width, border, padding, all of it. SDL3's Emscripten
+   backend probes it by forcing its backing store to 1x1 and reading back
+   getBoundingClientRect() (Emscripten_CreateWindow in
+   SDL_emscriptenvideo.c); if that isn't 1x1, it concludes CSS is
+   "externally" sizing the canvas and overrides the actual requested window
+   size (WINDOW_WIDTH/WINDOW_HEIGHT in frontend.cpp) with whatever it just
+   measured, shrinking the visible screen to some unrelated small size.
+   getBoundingClientRect() includes border/padding, so even just the border
+   below has to live on this wrapper instead of the canvas. */
+.canvas-frame {
   display: block;
+  width: max-content;
   margin: 0 auto 20px;
-  max-width: 100%;
-  height: auto;
   background: black;
-  image-rendering: pixelated;
   border: 6px solid #222;
   box-shadow:
     inset 0 0 0 4px #000,
     0 0 0 4px #555;
+}
+
+#main canvas {
+  display: block;
+  image-rendering: pixelated;
 }
 
 /* Pixel cards */
