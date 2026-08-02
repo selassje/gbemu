@@ -2,9 +2,7 @@ name: gbemu CD
 
 on:
   push:
-    # web_frontend: temporary, while the web build/deploy is still being
-    # verified on this branch - remove once merged to main.
-    branches: [main, web_frontend]
+    branches: [main]
   workflow_dispatch:
 
 env:
