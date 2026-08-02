@@ -51,7 +51,17 @@ if(EMSCRIPTEN)
   # No Conan for wasm - emscripten's own SDL3 port, pulled in purely via
   # compile/link flags (see sdl3-config.cmake in the emscripten sysroot).
   target_compile_options(gbemu PRIVATE -sUSE_SDL=3)
-  target_link_options(gbemu PRIVATE -sUSE_SDL=3 -sALLOW_MEMORY_GROWTH=1)
+  # -lidbfs.js: links the IDBFS filesystem backend web/script.js mounts
+  # (FS.mount(IDBFS, ...)) so uploaded ROMs persist across page reloads.
+  target_link_options(gbemu PRIVATE -sUSE_SDL=3 -sALLOW_MEMORY_GROWTH=1
+                      -lidbfs.js)
+
+  # Places gbemu.js/.wasm directly alongside web/'s own tracked files
+  # (index.html, styles.css, script.js, favicon) so the whole directory is ready
+  # to serve/deploy as-is after a build - see web's own .gitignore for why the
+  # build outputs themselves aren't tracked.
+  set_target_properties(gbemu PROPERTIES RUNTIME_OUTPUT_DIRECTORY
+                                         ${CMAKE_SOURCE_DIR}/web)
 else()
   find_package(SDL3 REQUIRED CONFIG)
   target_link_libraries(gbemu PRIVATE SDL3::SDL3)

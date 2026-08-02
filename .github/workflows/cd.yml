@@ -1,0 +1,63 @@
+name: gbemu CD
+
+on:
+  push:
+    # web_frontend: temporary, while the web build/deploy is still being
+    # verified on this branch - remove once merged to main.
+    branches: [main, web_frontend]
+  workflow_dispatch:
+
+env:
+  CMAKE_VER: 4.4.0
+  NINJA_VER: 1.11.1
+
+jobs:
+  build_and_deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - name: Setup CMake
+        uses: jwlawson/actions-setup-cmake@65b272e1213f99771fbba0c237e0b3312270e0c9 # v1.13
+        with:
+          cmake-version: ${{ env.CMAKE_VER }}
+
+      - name: Install Ninja
+        uses: seanmiddleditch/gha-setup-ninja@7e868db0f3406270dd46e1dac26c65f621456723 # master
+        with:
+          version: ${{ env.NINJA_VER }}
+
+      # Sets $EMSDK, which the dev_ninja_emscripten preset's toolchainFile
+      # points at.
+      - name: Setup emsdk
+        uses: emscripten-core/setup-emsdk@6ab9eb1bda2574c4ddb79809fc9247783eaf9021 # v14
+
+      # See ci.yml's own copy of this step for why this needs to run once,
+      # serially, before the parallel ninja build on a cold cache.
+      - name: Pre-build SDL3 port
+        run: embuilder build sdl3
+
+      - name: Configure
+        run: cmake --preset dev_ninja_emscripten
+
+      # gbemu.js/.wasm land directly in web/ (see src/CMakeLists.txt's
+      # RUNTIME_OUTPUT_DIRECTORY), so the whole directory is ready to deploy
+      # as-is once this finishes.
+      - name: Build
+        run: cmake --build --preset dev_ninja_emscripten
+
+      # Deploys web/ to the deploy_on_github branch, which the repo's GitHub
+      # Pages source needs pointing at (Settings > Pages) - a one-time
+      # manual step, since that branch doesn't exist until this job's first
+      # successful run creates it.
+      - name: Deploy to GitHub Pages
+        if: success()
+        uses: crazy-max/ghaction-github-pages@v2
+        with:
+          target_branch: deploy_on_github
+          build_dir: web
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

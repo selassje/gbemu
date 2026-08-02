@@ -391,6 +391,27 @@ App::showOpenRomDialog(Impl& impl)
 }
 
 void
+App::renderImGuiFrame(Impl& impl)
+{
+  ImGui_ImplSDLRenderer3_NewFrame();
+  ImGui_ImplSDL3_NewFrame();
+  ImGui::NewFrame();
+
+  if (ImGui::BeginMainMenuBar()) {
+    if (ImGui::BeginMenu("File")) {
+      if (ImGui::MenuItem("Open ROM...", "Ctrl+O")) {
+        showOpenRomDialog(impl);
+      }
+      ImGui::EndMenu();
+    }
+    ImGui::EndMainMenuBar();
+  }
+
+  ImGui::Render();
+}
+#endif
+
+void
 App::loadPendingRom(Impl& impl)
 {
   std::optional<std::string> romToLoad;
@@ -413,24 +434,27 @@ App::loadPendingRom(Impl& impl)
   }
 }
 
+#ifdef __EMSCRIPTEN__
 void
-App::renderImGuiFrame(Impl& impl)
+App::checkEmscriptenLoadRequest(Impl& impl)
 {
-  ImGui_ImplSDLRenderer3_NewFrame();
-  ImGui_ImplSDL3_NewFrame();
-  ImGui::NewFrame();
-
-  if (ImGui::BeginMainMenuBar()) {
-    if (ImGui::BeginMenu("File")) {
-      if (ImGui::MenuItem("Open ROM...", "Ctrl+O")) {
-        showOpenRomDialog(impl);
-      }
-      ImGui::EndMenu();
-    }
-    ImGui::EndMainMenuBar();
+  // web/script.js's loadRom(filename) writes the chosen filename here as a
+  // one-shot trigger, after the ROM itself has already been written into
+  // /roms/<filename> by its upload handler - mirrors the native Open ROM
+  // dialog's callback, just driven by the page instead of SDL.
+  static constexpr const char* requestPath = "/roms/.load_request";
+  if (!std::filesystem::exists(requestPath)) {
+    return;
   }
-
-  ImGui::Render();
+  std::ifstream file{ requestPath, std::ios::binary };
+  const std::string filename{ std::istreambuf_iterator<char>(file),
+                              std::istreambuf_iterator<char>() };
+  std::filesystem::remove(requestPath);
+  if (filename.empty()) {
+    return;
+  }
+  const std::scoped_lock lock{ impl.pendingRomPathMutex };
+  impl.pendingRomPath = "/roms/" + filename;
 }
 #endif
 
@@ -439,9 +463,10 @@ App::frameStep(void* userData)
 {
   auto& impl = *static_cast<Impl*>(userData);
 
-#ifndef __EMSCRIPTEN__
-  loadPendingRom(impl);
+#ifdef __EMSCRIPTEN__
+  checkEmscriptenLoadRequest(impl);
 #endif
+  loadPendingRom(impl);
 
   SDL_Event event;
   while (SDL_PollEvent(&event)) {

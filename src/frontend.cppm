@@ -46,6 +46,13 @@ private:
   // clang-tidy's threshold - each is only ever called from there.
   static void loadPendingRom(Impl& impl);
   static void renderImGuiFrame(Impl& impl);
+
+  // Emscripten's equivalent of showOpenRomDialog()/onRomFileChosen(): the
+  // web page (see web/script.js) has no native file dialog to hook, so it
+  // writes an uploaded ROM into Emscripten's virtual filesystem and this
+  // polls for a one-shot "load this one" marker file instead - see the
+  // definition in frontend.cpp.
+  static void checkEmscriptenLoadRequest(Impl& impl);
 };
 
 }
