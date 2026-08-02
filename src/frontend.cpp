@@ -31,16 +31,36 @@ constexpr int WINDOW_WIDTH =
 constexpr int WINDOW_HEIGHT =
   static_cast<int>(gbemu::SCREEN_HEIGHT) * WINDOW_SCALE;
 constexpr const char* WINDOW_TITLE = "Gbemu";
+// Only used as the (browser-driven) fps hint for emscripten_set_main_loop_arg
+// in run() - not involved in native pacing, see TARGET_FRAME_MS below.
 constexpr int TARGET_FPS = 60;
 #ifndef __EMSCRIPTEN__
 // A little breathing room below the menu bar (see Impl::menuBarHeight) so
 // the Game Boy screen isn't directly adjacent to it.
 constexpr float MENU_BAR_GAP = 0.0F;
-// Emscripten paces frames itself (see emscripten_set_main_loop_arg in
-// run()) - only the native manual-loop path needs its own per-frame delay
-// budget.
-constexpr double TARGET_FRAME_MS = 1000.0 / TARGET_FPS;
+// The real Game Boy refresh rate - 4194304 Hz CPU clock / 70224 T-cycles per
+// frame - which is ~59.7275 Hz, not exactly 60. Emscripten paces frames
+// itself (see emscripten_set_main_loop_arg in run()) - only the native
+// manual-loop path needs its own per-frame delay budget, and it needs to be
+// paced against the *real* GB frame duration: pacing at a flat 60 Hz would
+// produce video frames (and their fixed-size audio chunks - see
+// gbemu::Apu::SAMPLE_RATE) very slightly faster than real GB time, which
+// would otherwise let the audio stream's queue (see AUDIO_MAX_QUEUED_BYTES)
+// slowly build up a backlog over a long play session.
+constexpr double GB_REFRESH_RATE_HZ = 4194304.0 / 70224.0;
+constexpr double TARGET_FRAME_MS = 1000.0 / GB_REFRESH_RATE_HZ;
 #endif
+// Upper bound on how much unplayed audio is allowed to sit in the SDL audio
+// stream's internal queue before it gets dropped and resynced (see
+// frameStep()) - native frame pacing (TARGET_FRAME_MS) and the audio
+// device's own playback clock are two independent clocks with no hard sync
+// between them, so even a small mismatch would otherwise let queued audio
+// grow without bound and drift further behind video the longer a session
+// runs. ~100ms: generous enough to absorb ordinary frame-to-frame jitter
+// without audible dropouts, small enough that a listener won't notice the
+// lag building up to this point before it gets cut.
+constexpr int AUDIO_MAX_QUEUED_BYTES =
+  static_cast<int>(gbemu::SAMPLE_RATE) * 2 * sizeof(float) / 10;
 
 // Fixed physical-key layout (scancode-based, so it stays put regardless of
 // keyboard locale/layout) - not user-configurable yet.
@@ -534,6 +554,13 @@ App::frameStep(void* userData)
     SDL_RenderPresent(impl.renderer);
 
     if (impl.audioStream != nullptr) {
+      // Bound the stream's internal backlog before adding this frame's
+      // samples to it - see AUDIO_MAX_QUEUED_BYTES's own comment for why
+      // this can otherwise grow without limit.
+      if (SDL_GetAudioStreamQueued(impl.audioStream) > AUDIO_MAX_QUEUED_BYTES) {
+        SDL_ClearAudioStream(impl.audioStream);
+      }
+
       const auto audioByteCount =
         static_cast<int>(frame->audio.size() * sizeof(float));
       SDL_PutAudioStreamData(
