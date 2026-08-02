@@ -31,11 +31,16 @@ constexpr int WINDOW_WIDTH =
 constexpr int WINDOW_HEIGHT =
   static_cast<int>(gbemu::SCREEN_HEIGHT) * WINDOW_SCALE;
 constexpr const char* WINDOW_TITLE = "Gbemu";
+constexpr int TARGET_FPS = 60;
+#ifndef __EMSCRIPTEN__
 // A little breathing room below the menu bar (see Impl::menuBarHeight) so
 // the Game Boy screen isn't directly adjacent to it.
 constexpr float MENU_BAR_GAP = 0.0F;
-constexpr int TARGET_FPS = 60;
+// Emscripten paces frames itself (see emscripten_set_main_loop_arg in
+// run()) - only the native manual-loop path needs its own per-frame delay
+// budget.
 constexpr double TARGET_FRAME_MS = 1000.0 / TARGET_FPS;
+#endif
 
 // Fixed physical-key layout (scancode-based, so it stays put regardless of
 // keyboard locale/layout) - not user-configurable yet.

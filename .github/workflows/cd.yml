@@ -14,6 +14,11 @@ env:
 jobs:
   build_and_deploy:
     runs-on: ubuntu-latest
+    # Default GITHUB_TOKEN is read-only for contents; the Deploy step below
+    # pushes the deploy_on_github branch, which needs write access - without
+    # this, that push 403s ("Permission ... denied to github-actions[bot]").
+    permissions:
+      contents: write
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -41,13 +46,13 @@ jobs:
         run: embuilder build sdl3
 
       - name: Configure
-        run: cmake --preset dev_ninja_emscripten
+        run: cmake --preset release_ninja_emscripten
 
       # gbemu.js/.wasm land directly in web/ (see src/CMakeLists.txt's
       # RUNTIME_OUTPUT_DIRECTORY), so the whole directory is ready to deploy
       # as-is once this finishes.
       - name: Build
-        run: cmake --build --preset dev_ninja_emscripten
+        run: cmake --build --preset release_ninja_emscripten
 
       # Deploys web/ to the deploy_on_github branch, which the repo's GitHub
       # Pages source needs pointing at (Settings > Pages) - a one-time
