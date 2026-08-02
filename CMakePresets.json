@@ -256,6 +256,19 @@
       }
     },
     {
+      "name": "release_ninja_emscripten_windows",
+      "displayName": "release (Ninja, Emscripten/WASM, Windows) - requires `emsdk_env.bat` first, sets $env{EMSDK}",
+      "inherits": "dev_windows",
+      "generator": "Ninja",
+      "toolchainFile": "$env{EMSDK}/upstream/emscripten/cmake/Modules/Platform/Emscripten.cmake",
+      "binaryDir": "${sourceDir}/builds/release_ninja_emscripten_windows/build",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "CMAKE_EXPERIMENTAL_CXX_IMPORT_STD": "f35a9ac6-8463-4d38-8eec-5d6008153e7d",
+        "CMAKE_CXX_MODULE_STD": "ON"
+      }
+    },
+    {
       "name": "dev_vs_msvc",
       "displayName": "development (Visual Studio, MSVC)",
       "inherits": "dev_windows",
@@ -360,6 +373,10 @@
     {
       "name": "release_ninja_emscripten",
       "configurePreset": "release_ninja_emscripten"
+    },
+    {
+      "name": "release_ninja_emscripten_windows",
+      "configurePreset": "release_ninja_emscripten_windows"
     },
     {
       "name": "dev_vs_msvc",
