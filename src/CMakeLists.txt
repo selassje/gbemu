@@ -23,13 +23,13 @@ target_sources(gbemu PRIVATE ${CMAKE_CURRENT_LIST_DIR}/frontend.cpp
 
 # Same clang+MSVC-STL std module workaround as libgbemu's src/CMakeLists.txt -
 # kept verbatim since it's the identical toolchain gap. Excludes Emscripten:
-# emcc also reports CMAKE_CXX_COMPILER_ID "Clang" (it's a clang wrapper), but
-# on a Windows host targeting wasm there's no MSVC STL involved at all - the
+# emcc also reports CMAKE_CXX_COMPILER_ID "Clang" (it's a clang wrapper), but on
+# a Windows host targeting wasm there's no MSVC STL involved at all - the
 # Emscripten toolchain provides its own std module via
 # CMAKE_CXX_MODULE_STD/CMAKE_EXPERIMENTAL_CXX_IMPORT_STD instead (see the
 # dev_ninja_emscripten/release_ninja_emscripten* presets), and
-# $ENV{VcToolsInstallDir} is unset outside an MSVC dev shell, which without
-# this guard resolved STD_MODULE_DIR to a bare "/modules" and failed to find
+# $ENV{VcToolsInstallDir} is unset outside an MSVC dev shell, which without this
+# guard resolved STD_MODULE_DIR to a bare "/modules" and failed to find
 # "/modules/std.ixx".
 if(${CMAKE_HOST_SYSTEM_NAME} STREQUAL "Windows"
    AND ${CMAKE_GENERATOR} STREQUAL "Ninja"

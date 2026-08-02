@@ -31,10 +31,11 @@ constexpr int WINDOW_WIDTH =
 constexpr int WINDOW_HEIGHT =
   static_cast<int>(gbemu::SCREEN_HEIGHT) * WINDOW_SCALE;
 constexpr const char* WINDOW_TITLE = "Gbemu";
+#ifdef __EMSCRIPTEN__
 // Only used as the (browser-driven) fps hint for emscripten_set_main_loop_arg
 // in run() - not involved in native pacing, see TARGET_FRAME_MS below.
 constexpr int TARGET_FPS = 60;
-#ifndef __EMSCRIPTEN__
+#else
 // A little breathing room below the menu bar (see Impl::menuBarHeight) so
 // the Game Boy screen isn't directly adjacent to it.
 constexpr float MENU_BAR_GAP = 0.0F;
@@ -68,7 +69,7 @@ constexpr double TARGET_FRAME_MS = 1000.0 / GB_REFRESH_RATE_HZ;
 // Revisit with a wasm-appropriate threshold (verified in an actual browser,
 // not reasoned about the same way native's was) rather than reusing this one.
 constexpr int AUDIO_MAX_QUEUED_BYTES =
-  static_cast<int>(gbemu::SAMPLE_RATE) * 2 * sizeof(float) / 10;
+  static_cast<int>(gbemu::SAMPLE_RATE * 2 * sizeof(float) / 10);
 #endif
 
 // Fixed physical-key layout (scancode-based, so it stays put regardless of
