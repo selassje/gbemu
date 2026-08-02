@@ -445,9 +445,10 @@ App::checkEmscriptenLoadRequest(Impl& impl)
 {
   // web/script.js's loadRom(filename) writes the chosen filename here as a
   // one-shot trigger, after the ROM itself has already been written into
-  // /roms/<filename> by its upload handler - mirrors the native Open ROM
-  // dialog's callback, just driven by the page instead of SDL.
-  static constexpr const char* requestPath = "/roms/.load_request";
+  // /gbemu_roms/<filename> by its upload handler - mirrors the native Open
+  // ROM dialog's callback, just driven by the page instead of SDL. See
+  // script.js's own comment on why this isn't just "/roms".
+  static constexpr const char* requestPath = "/gbemu_roms/.load_request";
   if (!std::filesystem::exists(requestPath)) {
     return;
   }
@@ -459,7 +460,7 @@ App::checkEmscriptenLoadRequest(Impl& impl)
     return;
   }
   const std::scoped_lock lock{ impl.pendingRomPathMutex };
-  impl.pendingRomPath = "/roms/" + filename;
+  impl.pendingRomPath = "/gbemu_roms/" + filename;
 }
 #endif
 

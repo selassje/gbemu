@@ -2,13 +2,21 @@ function upload_rom_file_btn_click() {
     document.querySelector("#upload_rom_file").click()
 }
 
+function isRomFile(filename) {
+    return /\.(gb|gbc)$/i.test(filename);
+}
+
 function upload_rom_file() {
     const file = this.files[0];
+    if (!isRomFile(file.name)) {
+        alert("Only .gb/.gbc ROM files are supported.");
+        return;
+    }
     var reader = new FileReader();
     reader.readAsArrayBuffer(file);
     reader.onload = function (evt) {
         var buf = new Uint8Array(evt.target.result);
-        FS.writeFile("roms/" + file.name, buf);
+        FS.writeFile("gbemu_roms/" + file.name, buf);
         refreshRomFilesList();
         syncToStorage();
     }
@@ -19,13 +27,13 @@ function loadRom(filename) {
     // (frontend.cpp) polls for this file once per frame, reads the
     // filename it names, then deletes it.
     const encoder = new TextEncoder();
-    FS.writeFile("roms/.load_request", encoder.encode(filename));
+    FS.writeFile("gbemu_roms/.load_request", encoder.encode(filename));
 }
 
 function deleteRom(filename) {
     if (confirm(`Delete ROM file "${filename}"?`)) {
         try {
-            FS.unlink(`roms/${filename}`);
+            FS.unlink(`gbemu_roms/${filename}`);
             refreshRomFilesList();
             syncToStorage();
         } catch (e) {
@@ -37,7 +45,8 @@ function deleteRom(filename) {
 function getFiles(dir) {
     return FS.readdir(dir)
         .filter(item => item !== '.' && item !== '..' && !item.startsWith('.'))
-        .filter(item => FS.isFile(FS.stat(`${dir}/${item}`).mode));
+        .filter(item => FS.isFile(FS.stat(`${dir}/${item}`).mode))
+        .filter(isRomFile);
 }
 
 function refreshRomFilesList() {
@@ -47,7 +56,7 @@ function refreshRomFilesList() {
     ul.innerHTML = "";
     listContainer.style.display = "none";
 
-    const rom_files = getFiles("roms");
+    const rom_files = getFiles("gbemu_roms");
 
     if (rom_files.length === 0) {
         return;
@@ -86,7 +95,7 @@ function refreshRomFilesList() {
     listContainer.style.display = "block";
 }
 
-// Call after any change under /roms, to persist it in IndexedDB.
+// Call after any change under /gbemu_roms, to persist it in IndexedDB.
 function syncToStorage() {
     FS.syncfs(false, function (err) {
         if (err) {
@@ -97,11 +106,16 @@ function syncToStorage() {
 
 // Initialize the ROM filesystem once the Emscripten runtime is ready.
 Module.onRuntimeInitialized = function () {
-    FS.mkdir("roms");
+    FS.mkdir("gbemu_roms");
 
-    // Mount IDBFS for persistent storage, so uploaded ROMs survive a
-    // page reload.
-    FS.mount(IDBFS, {}, "/roms");
+    // Mount IDBFS for persistent storage, so uploaded ROMs survive a page
+    // reload. IndexedDB is scoped per browser origin, not per page path, and
+    // Emscripten's IDBFS uses the FS mount point itself as the IndexedDB
+    // database name - a generic "/roms" here would collide with any other
+    // Emscripten app mounting the same path on the same origin (e.g. one
+    // hosted at a sibling GitHub Pages path), silently sharing/mixing their
+    // persisted files. "/gbemu_roms" keeps this app's storage distinct.
+    FS.mount(IDBFS, {}, "/gbemu_roms");
 
     // Sync from IndexedDB to memory (populate=true means load from DB).
     FS.syncfs(true, function (err) {
