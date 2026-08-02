@@ -601,7 +601,8 @@ App::frameStep(void* userData)
       };
       SDL_RenderTexture(impl.renderer, impl.texture, nullptr, &destRect);
 #ifndef __EMSCRIPTEN__
-      ImGui_ImplSDLRenderer3_RenderDrawData(ImGui::GetDrawData(), impl.renderer);
+      ImGui_ImplSDLRenderer3_RenderDrawData(ImGui::GetDrawData(),
+                                            impl.renderer);
 #endif
       SDL_RenderPresent(impl.renderer);
 
