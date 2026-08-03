@@ -253,6 +253,20 @@ jobs:
       - name: Pre-build SDL3 port
         run: embuilder build sdl3
 
+      # Needed since imgui became a Conan dependency here too (see
+      # cmake/bootstrap_emscripten_conan.cmake) - SDL3 above still comes from
+      # Emscripten's own port, not Conan, so this job never needed Conan at
+      # all before that.
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+
+      - name: Install Conan
+        run: |
+          pip install --only-binary :all: conan==2.31.1
+          conan profile detect --force
+
       - name: Configure
         run: cmake --preset dev_ninja_emscripten
 
