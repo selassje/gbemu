@@ -1,0 +1,32 @@
+# Conan host profile for cross-building imgui to wasm32-emscripten - the one
+# Conan dependency the Emscripten build still needs (see
+# bootstrap_emscripten_conan.cmake for why SDL3 and the project's own
+# toolchain skip Conan entirely on this platform, but imgui can't: conancenter
+# ships no prebuilt wasm32-emscripten binary for it, and there's no
+# Emscripten-native package manager equivalent). `compiler=emcc` is Conan's
+# own first-class setting for this (see conan2's settings.yml), distinct from
+# `compiler=clang` even though emcc is a clang wrapper - confirmed directly:
+# `conan install --requires=imgui/1.92.8 -pr:h cmake/emscripten_conan_profile
+# --build=missing` builds a real libimgui.a via em++.
+[settings]
+os=Emscripten
+arch=wasm
+compiler=emcc
+# Whatever `emcc --version` reports (its own tool version, not the clang it
+# wraps) - bump this if it drifts far enough from whatever emsdk's installed
+# to matter for the package ID; Conan doesn't itself verify it matches the
+# actual compiler_executables binary.
+compiler.version=6.0.4
+compiler.libcxx=libc++
+compiler.cppstd=23
+build_type=Debug
+
+[buildenv]
+CC=emcc
+CXX=em++
+AR=emar
+RANLIB=emranlib
+
+[conf]
+tools.build:compiler_executables={"c": "emcc", "cpp": "em++"}
+tools.cmake.cmaketoolchain:generator=Ninja

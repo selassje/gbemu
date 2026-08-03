@@ -57,8 +57,12 @@ endif()
 target_link_libraries(gbemu PRIVATE libgbemu)
 
 if(EMSCRIPTEN)
-  # No Conan for wasm - emscripten's own SDL3 port, pulled in purely via
-  # compile/link flags (see sdl3-config.cmake in the emscripten sysroot).
+  # No Conan for SDL3 on wasm - emscripten's own SDL3 port, pulled in purely via
+  # compile/link flags (see sdl3-config.cmake in the emscripten sysroot). ImGui
+  # is still a Conan package here, just cross-built from source via a dedicated
+  # os=Emscripten profile - see cmake/bootstrap_emscripten_conan.cmake for why
+  # (conancenter has no prebuilt wasm32-emscripten binary for it, and
+  # Emscripten's own port doesn't cover ImGui, only SDL3).
   target_compile_options(gbemu PRIVATE -sUSE_SDL=3)
   # -lidbfs.js: links the IDBFS filesystem backend web/script.js mounts
   # (FS.mount(IDBFS, ...)) so uploaded ROMs persist across page reloads.
@@ -74,36 +78,62 @@ if(EMSCRIPTEN)
 else()
   find_package(SDL3 REQUIRED CONFIG)
   target_link_libraries(gbemu PRIVATE SDL3::SDL3)
+endif()
 
-  # Dear ImGui, for the menu bar (File > Open ROM...) - native builds only, same
-  # as SDL3 above; not offered to the Emscripten build (see frontend.cpp's
-  # __EMSCRIPTEN__ guards around every ImGui call).
-  find_package(imgui REQUIRED CONFIG)
-  target_link_libraries(gbemu PRIVATE imgui::imgui)
+# Dear ImGui, for the menu bar (File > Open ROM... on native; Game > Reset/Pause
+# on both - see frontend.cpp's __EMSCRIPTEN__ guards around the File menu
+# specifically) - both platforms now.
+find_package(imgui REQUIRED CONFIG)
+target_link_libraries(gbemu PRIVATE imgui::imgui)
 
-  # with_sdl3_binding (see conanfile.txt) only builds imgui's SDL3
-  # platform/event backend into imgui::imgui - the SDL_Renderer backend
-  # (imgui_impl_sdlrenderer3) isn't part of that option and isn't built into the
-  # library at all; conan's recipe ships it as a loose source file under the
-  # package's res/bindings, meant to be compiled straight into the consumer.
-  # imgui_INCLUDE_DIR (.../include) is a normal, non-generator-expr path here
-  # because this project only ever configures a single Conan build_type per
-  # binary dir (see CMakePresets.json), so walking up from it to the package
-  # root is safe.
-  cmake_path(GET imgui_INCLUDE_DIR PARENT_PATH IMGUI_PACKAGE_ROOT)
-  set(IMGUI_BACKENDS_DIR ${IMGUI_PACKAGE_ROOT}/res/bindings)
+# with_sdl3_binding (see conanfile.txt) only builds imgui's SDL3 platform/event
+# backend into imgui::imgui on native - the SDL_Renderer backend
+# (imgui_impl_sdlrenderer3) isn't part of that option on either platform and
+# isn't built into the library at all; conan's recipe ships it (and
+# imgui_impl_sdl3, needed unconditionally below on Emscripten - see its own
+# comment) as loose source files under the package's res/bindings, meant to be
+# compiled straight into the consumer. imgui_INCLUDE_DIR (.../include) is a
+# normal, non-generator-expr path here because this project only ever configures
+# a single Conan build_type per binary dir (see CMakePresets.json), so walking
+# up from it to the package root is safe.
+cmake_path(GET imgui_INCLUDE_DIR PARENT_PATH IMGUI_PACKAGE_ROOT)
+set(IMGUI_BACKENDS_DIR ${IMGUI_PACKAGE_ROOT}/res/bindings)
 
-  # A separate OBJECT library, not a source added straight to gbemu: it keeps
-  # this vendored backend file out from under setup_compiler_warnings() /-Werror
-  # below, which it wasn't written to satisfy.
-  add_library(imgui_sdlrenderer3_backend OBJECT
-              ${IMGUI_BACKENDS_DIR}/imgui_impl_sdlrenderer3.cpp)
-  target_include_directories(imgui_sdlrenderer3_backend
-                             PUBLIC ${IMGUI_BACKENDS_DIR})
-  target_link_libraries(imgui_sdlrenderer3_backend PRIVATE imgui::imgui
-                                                           SDL3::SDL3)
+# A separate OBJECT library, not a source added straight to gbemu: it keeps this
+# vendored backend file out from under setup_compiler_warnings() /-Werror below,
+# which it wasn't written to satisfy.
+add_library(imgui_sdlrenderer3_backend OBJECT
+            ${IMGUI_BACKENDS_DIR}/imgui_impl_sdlrenderer3.cpp)
+target_include_directories(imgui_sdlrenderer3_backend
+                           PUBLIC ${IMGUI_BACKENDS_DIR})
+target_link_libraries(imgui_sdlrenderer3_backend PRIVATE imgui::imgui)
+if(EMSCRIPTEN)
+  # Same reasoning as gbemu's own -sUSE_SDL=3 above - this backend file
+  # #includes <SDL3/SDL.h> too, and there's no SDL3::SDL3 Conan target to link
+  # against here, just the compile flag that makes Emscripten's own bundled SDL3
+  # headers visible.
+  target_compile_options(imgui_sdlrenderer3_backend PRIVATE -sUSE_SDL=3)
+else()
+  target_link_libraries(imgui_sdlrenderer3_backend PRIVATE SDL3::SDL3)
+endif()
 
-  target_link_libraries(gbemu PRIVATE imgui_sdlrenderer3_backend)
+target_link_libraries(gbemu PRIVATE imgui_sdlrenderer3_backend)
+
+if(EMSCRIPTEN)
+  # Unlike native (with_sdl3_binding=True bakes this into imgui::imgui itself),
+  # the Emscripten imgui package is built with that option off - see
+  # cmake/bootstrap_emscripten_conan.cmake for why (a Conan-cross-built SDL3
+  # would otherwise become a hard dependency of imgui::imgui's CMake target, and
+  # get linked into gbemu alongside Emscripten's own real SDL3). So this
+  # platform needs the same treatment as imgui_impl_sdlrenderer3.cpp above, just
+  # for the other backend half.
+  add_library(imgui_sdl3_backend OBJECT
+              ${IMGUI_BACKENDS_DIR}/imgui_impl_sdl3.cpp)
+  target_include_directories(imgui_sdl3_backend PUBLIC ${IMGUI_BACKENDS_DIR})
+  target_link_libraries(imgui_sdl3_backend PRIVATE imgui::imgui)
+  target_compile_options(imgui_sdl3_backend PRIVATE -sUSE_SDL=3)
+
+  target_link_libraries(gbemu PRIVATE imgui_sdl3_backend)
 endif()
 
 setup_compiler_warnings(gbemu)

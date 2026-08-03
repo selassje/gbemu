@@ -11,11 +11,10 @@ module;
 
 #ifdef __EMSCRIPTEN__
 #include <emscripten/emscripten.h>
-#else
+#endif
 #include <imgui.h>
 #include <imgui_impl_sdl3.h>
 #include <imgui_impl_sdlrenderer3.h>
-#endif
 
 module frontend;
 
@@ -37,11 +36,10 @@ constexpr const char* WINDOW_TITLE = "Gbemu";
 // the actual emulation rate (see Impl::framesEmulated in frameStep() for
 // why those two are kept separate).
 constexpr int TARGET_FPS = 60;
-#else
+#endif
 // A little breathing room below the menu bar (see Impl::menuBarHeight) so
 // the Game Boy screen isn't directly adjacent to it.
 constexpr float MENU_BAR_GAP = 0.0F;
-#endif
 // The real Game Boy refresh rate - 4194304 Hz CPU clock / 70224 T-cycles per
 // frame - which is ~59.7275 Hz, not exactly 60. Both native and Emscripten
 // need to pace *emulation* (i.e. gbemu::GameBoy::runNextFrame() calls, and
@@ -382,10 +380,10 @@ struct App::Impl
   // it from the caller.
   std::optional<gbemu::GameBoy> gameBoy;
   bool running = true;
-  // Native-only (see the Game menu in renderImGuiFrame and togglePause()):
-  // frameStep() skips runNextFrame() while set, but still presents every
-  // callback, so the menu bar stays interactive instead of the window
-  // appearing frozen.
+  // Toggled by togglePause() - the Game menu's Pause item on both platforms,
+  // or native's Ctrl+P shortcut. frameStep() skips runNextFrame() while set,
+  // but still presents every callback, so the menu bar stays interactive
+  // instead of the window appearing frozen.
   bool paused = false;
   std::optional<std::string> error;
   // Written from SDL's file-dialog callback (see showOpenRomDialog below),
@@ -394,10 +392,10 @@ struct App::Impl
   // ROM straight from that callback's thread.
   std::mutex pendingRomPathMutex;
   std::optional<std::string> pendingRomPath;
-  // 0 on Emscripten (no menu bar there) - set once during run()'s ImGui
-  // init on native builds, to how tall the main menu bar actually rendered
-  // plus MENU_BAR_GAP, so the Game Boy screen can be drawn just below it
-  // instead of the menu bar covering (or touching) its top rows.
+  // Set once during run()'s ImGui init, to how tall the main menu bar
+  // actually rendered plus MENU_BAR_GAP, so the Game Boy screen can be
+  // drawn just below it instead of the menu bar covering (or touching) its
+  // top rows.
   float menuBarHeight = 0.0F;
 #ifdef __EMSCRIPTEN__
   // Wall-clock accumulator driving frameStep()'s emulation gate - see its
@@ -408,6 +406,35 @@ struct App::Impl
   std::uint64_t framesEmulated = 0;
 #endif
 };
+
+void
+App::resetGame(Impl& impl)
+{
+  // run() always emplace()s gameBoy before either of this function's
+  // callers (the Game menu's Reset item, on both platforms, or native's
+  // Ctrl+R shortcut) can reach this - see the other NOLINTNEXTLINEs of this
+  // kind elsewhere in this file.
+  // NOLINTNEXTLINE(bugprone-unchecked-optional-access)
+  if (const auto result = impl.gameBoy->reset(); !result) {
+    std::cerr << "Warning: failed to reset: " << result.error() << '\n';
+  }
+}
+
+void
+App::togglePause(Impl& impl)
+{
+  impl.paused = !impl.paused;
+  if (impl.audioStream != nullptr) {
+    // Mutes immediately instead of leaving already-queued samples to drain
+    // out on their own - see run()'s matching SDL_ResumeAudioStreamDevice
+    // call for why a stream needs an explicit resume/pause at all.
+    if (impl.paused) {
+      SDL_PauseAudioStreamDevice(impl.audioStream);
+    } else {
+      SDL_ResumeAudioStreamDevice(impl.audioStream);
+    }
+  }
+}
 
 #ifndef __EMSCRIPTEN__
 namespace {
@@ -443,34 +470,7 @@ App::showOpenRomDialog(Impl& impl)
                          nullptr,
                          false);
 }
-
-void
-App::resetGame(Impl& impl)
-{
-  // frameStep() always emplace()s gameBoy before either its caller
-  // (renderImGuiFrame()) or the Ctrl+R shortcut below can reach this - see
-  // the other NOLINTNEXTLINEs of this kind elsewhere in this file.
-  // NOLINTNEXTLINE(bugprone-unchecked-optional-access)
-  if (const auto result = impl.gameBoy->reset(); !result) {
-    std::cerr << "Warning: failed to reset: " << result.error() << '\n';
-  }
-}
-
-void
-App::togglePause(Impl& impl)
-{
-  impl.paused = !impl.paused;
-  if (impl.audioStream != nullptr) {
-    // Mutes immediately instead of leaving already-queued samples to drain
-    // out on their own - see run()'s matching SDL_ResumeAudioStreamDevice
-    // call for why a stream needs an explicit resume/pause at all.
-    if (impl.paused) {
-      SDL_PauseAudioStreamDevice(impl.audioStream);
-    } else {
-      SDL_ResumeAudioStreamDevice(impl.audioStream);
-    }
-  }
-}
+#endif
 
 void
 App::renderImGuiFrame(Impl& impl)
@@ -480,12 +480,18 @@ App::renderImGuiFrame(Impl& impl)
   ImGui::NewFrame();
 
   if (ImGui::BeginMainMenuBar()) {
+#ifndef __EMSCRIPTEN__
+    // No native file dialog to hook on Emscripten - see
+    // showOpenRomDialog()/onRomFileChosen()'s own __EMSCRIPTEN__ guard above;
+    // the web page's sidebar upload button covers this instead (see
+    // web/script.js).
     if (ImGui::BeginMenu("File")) {
       if (ImGui::MenuItem("Open ROM...", "Ctrl+O")) {
         showOpenRomDialog(impl);
       }
       ImGui::EndMenu();
     }
+#endif
     if (ImGui::BeginMenu("Game")) {
       if (ImGui::MenuItem("Reset", "Ctrl+R")) {
         resetGame(impl);
@@ -500,7 +506,6 @@ App::renderImGuiFrame(Impl& impl)
 
   ImGui::Render();
 }
-#endif
 
 void
 App::loadPendingRom(Impl& impl)
@@ -548,6 +553,7 @@ App::checkEmscriptenLoadRequest(Impl& impl)
   const std::scoped_lock lock{ impl.pendingRomPathMutex };
   impl.pendingRomPath = "/gbemu_roms/" + filename;
 }
+
 #endif
 
 // Split out of frameStep() purely to keep its cognitive complexity under
@@ -558,9 +564,7 @@ App::pollEvents(Impl& impl)
 {
   SDL_Event event;
   while (SDL_PollEvent(&event)) {
-#ifndef __EMSCRIPTEN__
     ImGui_ImplSDL3_ProcessEvent(&event);
-#endif
     if (event.type == SDL_EVENT_QUIT) {
       impl.running = false;
 #ifndef __EMSCRIPTEN__
@@ -606,7 +610,6 @@ App::frameStep(void* userData)
   pollEvents(impl);
 
 #ifndef __EMSCRIPTEN__
-  renderImGuiFrame(impl);
   constexpr bool shouldEmulateFrame = true;
 #else
   // The browser invokes this callback at its own pace (TARGET_FPS is only an
@@ -637,14 +640,20 @@ App::frameStep(void* userData)
 #ifdef __EMSCRIPTEN__
     ++impl.framesEmulated;
 #endif
-#ifndef __EMSCRIPTEN__
+    // NewFrame()/Render() must stay paired within whichever callback
+    // actually presents (see the render/present block below, unconditional
+    // on native but gated the same as this whole block on Emscripten) -
+    // calling this outside shouldEmulateFrame would leave a NewFrame()
+    // dangling without a matching Render() on callbacks Emscripten skips
+    // presenting.
+    renderImGuiFrame(impl);
+
     // While paused, skip advancing the emulator (and pushing audio for a
     // frame that was never emulated) entirely rather than merely not
     // *presenting* the result - togglePause() separately mutes the audio
     // device outright, so this is belt-and-suspenders against ever
     // computing samples that would otherwise just be discarded.
     if (!impl.paused) {
-#endif
       // NOLINTNEXTLINE(bugprone-unchecked-optional-access) - see above.
       const auto frame = impl.gameBoy->runNextFrame();
       if (!frame) {
@@ -673,9 +682,7 @@ App::frameStep(void* userData)
             impl.audioStream, frame->audio.data_handle(), audioByteCount);
         }
       }
-#ifndef __EMSCRIPTEN__
     }
-#endif
 
     // Presented every callback regardless of Impl::paused - a streaming
     // texture keeps its last uploaded pixels until the next
@@ -683,9 +690,9 @@ App::frameStep(void* userData)
     // showing the same frame instead of the window (and the menu bar
     // that's drawn into the same draw data) going dark or unresponsive.
     SDL_RenderClear(impl.renderer);
-    // Drawn below the menu bar (impl.menuBarHeight, 0 on Emscripten - see
-    // Impl::menuBarHeight), not stretched to fill the whole window, so the
-    // menu bar never covers the Game Boy screen's top rows.
+    // Drawn below the menu bar (impl.menuBarHeight - see its own comment),
+    // not stretched to fill the whole window, so the menu bar never covers
+    // the Game Boy screen's top rows.
     const SDL_FRect destRect = {
       .x = 0.0F,
       .y = impl.menuBarHeight,
@@ -693,9 +700,7 @@ App::frameStep(void* userData)
       .h = static_cast<float>(WINDOW_HEIGHT),
     };
     SDL_RenderTexture(impl.renderer, impl.texture, nullptr, &destRect);
-#ifndef __EMSCRIPTEN__
     ImGui_ImplSDLRenderer3_RenderDrawData(ImGui::GetDrawData(), impl.renderer);
-#endif
     SDL_RenderPresent(impl.renderer);
   }
 
@@ -713,13 +718,11 @@ App::App()
 
 App::~App()
 {
-#ifndef __EMSCRIPTEN__
   if (m_impl->imguiInitialized) {
     ImGui_ImplSDLRenderer3_Shutdown();
     ImGui_ImplSDL3_Shutdown();
     ImGui::DestroyContext();
   }
-#endif
   if (m_impl->audioStream != nullptr) {
     // Also closes the device it was opened alongside (see
     // SDL_OpenAudioDeviceStream in run()) - no separate SDL_CloseAudioDevice
@@ -804,7 +807,6 @@ App::run(std::optional<std::string_view> romPath, gbemu::Mode mode)
   // art instead of keeping crisp per-pixel edges.
   SDL_SetTextureScaleMode(m_impl->texture, SDL_SCALEMODE_NEAREST);
 
-#ifndef __EMSCRIPTEN__
   IMGUI_CHECKVERSION();
   ImGui::CreateContext();
   // No imgui.ini for a single always-present menu bar - there's no window
@@ -833,11 +835,14 @@ App::run(std::optional<std::string_view> romPath, gbemu::Mode mode)
   ImGui::NewFrame();
   ImGui::EndFrame();
   m_impl->menuBarHeight = ImGui::GetFrameHeight() + MENU_BAR_GAP;
+  // On Emscripten this resizes the <canvas> element itself (SDL3's
+  // Emscripten backend ties window size to it) - see styles.css's own
+  // comment on why nothing else may touch the canvas's CSS box, or this
+  // resize's own effect gets mismeasured and undone.
   SDL_SetWindowSize(m_impl->window,
                     WINDOW_WIDTH,
                     WINDOW_HEIGHT +
                       static_cast<int>(std::ceil(m_impl->menuBarHeight)));
-#endif
 
   // Matches EmulationFrame::audio's own layout exactly (see gbemu.cppm) -
   // interleaved float stereo at gbemu::SAMPLE_RATE - so each frame's

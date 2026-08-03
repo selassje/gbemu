@@ -48,9 +48,12 @@ private:
   static void pollEvents(Impl& impl);
   static void renderImGuiFrame(Impl& impl);
 
-  // Shared by the Game menu's Reset item and its Ctrl+R shortcut.
+  // Shared by the Game menu's Reset item and its native-only Ctrl+R
+  // shortcut - the ImGui menu itself now renders on both platforms (see
+  // frontend.cpp's __EMSCRIPTEN__ guards, narrowed to just the File menu).
   static void resetGame(Impl& impl);
-  // Shared by the Game menu's Pause item and its Ctrl+P shortcut.
+  // Shared by the Game menu's Pause item and its native-only Ctrl+P
+  // shortcut.
   static void togglePause(Impl& impl);
 
   // Emscripten's equivalent of showOpenRomDialog()/onRomFileChosen(): the

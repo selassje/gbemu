@@ -19,6 +19,7 @@ include(cmake/clang_format.cmake)
 include(cmake/cmake_format.cmake)
 include(cmake/setup_static_analysis.cmake)
 include(cmake/coverage_report.cmake)
+include(cmake/bootstrap_emscripten_conan.cmake)
 
 # Vendored source, not a Conan package (yet) - see CLAUDE.md. libgbemu's own
 # root CMakeLists.txt guards its clang-format/cmake-format/coverage-report
