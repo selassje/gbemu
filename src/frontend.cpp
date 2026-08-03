@@ -572,6 +572,7 @@ App::pollEvents(Impl& impl)
                event.key.scancode == SDL_SCANCODE_O &&
                (event.key.mod & SDL_KMOD_CTRL) != 0) {
       showOpenRomDialog(impl);
+#endif
     } else if (event.type == SDL_EVENT_KEY_DOWN && !event.key.repeat &&
                event.key.scancode == SDL_SCANCODE_R &&
                (event.key.mod & SDL_KMOD_CTRL) != 0) {
@@ -580,7 +581,6 @@ App::pollEvents(Impl& impl)
                event.key.scancode == SDL_SCANCODE_P &&
                (event.key.mod & SDL_KMOD_CTRL) != 0) {
       togglePause(impl);
-#endif
     } else if (event.type == SDL_EVENT_KEY_DOWN ||
                event.type == SDL_EVENT_KEY_UP) {
       if (event.key.repeat) {
