@@ -382,6 +382,11 @@ struct App::Impl
   // it from the caller.
   std::optional<gbemu::GameBoy> gameBoy;
   bool running = true;
+  // Native-only (see the Game menu in renderImGuiFrame and togglePause()):
+  // frameStep() skips runNextFrame() while set, but still presents every
+  // callback, so the menu bar stays interactive instead of the window
+  // appearing frozen.
+  bool paused = false;
   std::optional<std::string> error;
   // Written from SDL's file-dialog callback (see showOpenRomDialog below),
   // which SDL may invoke from a thread other than this one - guarded so
@@ -440,6 +445,34 @@ App::showOpenRomDialog(Impl& impl)
 }
 
 void
+App::resetGame(Impl& impl)
+{
+  // frameStep() always emplace()s gameBoy before either its caller
+  // (renderImGuiFrame()) or the Ctrl+R shortcut below can reach this - see
+  // the other NOLINTNEXTLINEs of this kind elsewhere in this file.
+  // NOLINTNEXTLINE(bugprone-unchecked-optional-access)
+  if (const auto result = impl.gameBoy->reset(); !result) {
+    std::cerr << "Warning: failed to reset: " << result.error() << '\n';
+  }
+}
+
+void
+App::togglePause(Impl& impl)
+{
+  impl.paused = !impl.paused;
+  if (impl.audioStream != nullptr) {
+    // Mutes immediately instead of leaving already-queued samples to drain
+    // out on their own - see run()'s matching SDL_ResumeAudioStreamDevice
+    // call for why a stream needs an explicit resume/pause at all.
+    if (impl.paused) {
+      SDL_PauseAudioStreamDevice(impl.audioStream);
+    } else {
+      SDL_ResumeAudioStreamDevice(impl.audioStream);
+    }
+  }
+}
+
+void
 App::renderImGuiFrame(Impl& impl)
 {
   ImGui_ImplSDLRenderer3_NewFrame();
@@ -450,6 +483,15 @@ App::renderImGuiFrame(Impl& impl)
     if (ImGui::BeginMenu("File")) {
       if (ImGui::MenuItem("Open ROM...", "Ctrl+O")) {
         showOpenRomDialog(impl);
+      }
+      ImGui::EndMenu();
+    }
+    if (ImGui::BeginMenu("Game")) {
+      if (ImGui::MenuItem("Reset", "Ctrl+R")) {
+        resetGame(impl);
+      }
+      if (ImGui::MenuItem("Pause", "Ctrl+P", impl.paused)) {
+        togglePause(impl);
       }
       ImGui::EndMenu();
     }
@@ -530,6 +572,14 @@ App::frameStep(void* userData)
                event.key.scancode == SDL_SCANCODE_O &&
                (event.key.mod & SDL_KMOD_CTRL) != 0) {
       showOpenRomDialog(impl);
+    } else if (event.type == SDL_EVENT_KEY_DOWN && !event.key.repeat &&
+               event.key.scancode == SDL_SCANCODE_R &&
+               (event.key.mod & SDL_KMOD_CTRL) != 0) {
+      resetGame(impl);
+    } else if (event.type == SDL_EVENT_KEY_DOWN && !event.key.repeat &&
+               event.key.scancode == SDL_SCANCODE_P &&
+               (event.key.mod & SDL_KMOD_CTRL) != 0) {
+      togglePause(impl);
 #endif
     } else if (event.type == SDL_EVENT_KEY_DOWN ||
                event.type == SDL_EVENT_KEY_UP) {
@@ -579,51 +629,66 @@ App::frameStep(void* userData)
 #ifdef __EMSCRIPTEN__
     ++impl.framesEmulated;
 #endif
-    // NOLINTNEXTLINE(bugprone-unchecked-optional-access) - see above.
-    const auto frame = impl.gameBoy->runNextFrame();
-    if (!frame) {
-      impl.error = frame.error();
-      impl.running = false;
-    } else {
-      SDL_UpdateTexture(impl.texture,
-                        nullptr,
-                        frame->pixels.data_handle(),
-                        static_cast<int>(gbemu::SCREEN_WIDTH * 3));
-      SDL_RenderClear(impl.renderer);
-      // Drawn below the menu bar (impl.menuBarHeight, 0 on Emscripten - see
-      // Impl::menuBarHeight), not stretched to fill the whole window, so the
-      // menu bar never covers the Game Boy screen's top rows.
-      const SDL_FRect destRect = {
-        .x = 0.0F,
-        .y = impl.menuBarHeight,
-        .w = static_cast<float>(WINDOW_WIDTH),
-        .h = static_cast<float>(WINDOW_HEIGHT),
-      };
-      SDL_RenderTexture(impl.renderer, impl.texture, nullptr, &destRect);
 #ifndef __EMSCRIPTEN__
-      ImGui_ImplSDLRenderer3_RenderDrawData(ImGui::GetDrawData(),
-                                            impl.renderer);
+    // While paused, skip advancing the emulator (and pushing audio for a
+    // frame that was never emulated) entirely rather than merely not
+    // *presenting* the result - togglePause() separately mutes the audio
+    // device outright, so this is belt-and-suspenders against ever
+    // computing samples that would otherwise just be discarded.
+    if (!impl.paused) {
 #endif
-      SDL_RenderPresent(impl.renderer);
-
-      if (impl.audioStream != nullptr) {
+      // NOLINTNEXTLINE(bugprone-unchecked-optional-access) - see above.
+      const auto frame = impl.gameBoy->runNextFrame();
+      if (!frame) {
+        impl.error = frame.error();
+        impl.running = false;
+      } else {
+        SDL_UpdateTexture(impl.texture,
+                          nullptr,
+                          frame->pixels.data_handle(),
+                          static_cast<int>(gbemu::SCREEN_WIDTH * 3));
+        if (impl.audioStream != nullptr) {
 #ifndef __EMSCRIPTEN__
-        // Bound the stream's internal backlog before adding this frame's
-        // samples to it - see AUDIO_MAX_QUEUED_BYTES's own comment for why
-        // this can otherwise grow without limit, and for why this is
-        // native-only.
-        if (SDL_GetAudioStreamQueued(impl.audioStream) >
-            AUDIO_MAX_QUEUED_BYTES) {
-          SDL_ClearAudioStream(impl.audioStream);
+          // Bound the stream's internal backlog before adding this frame's
+          // samples to it - see AUDIO_MAX_QUEUED_BYTES's own comment for why
+          // this can otherwise grow without limit, and for why this is
+          // native-only.
+          if (SDL_GetAudioStreamQueued(impl.audioStream) >
+              AUDIO_MAX_QUEUED_BYTES) {
+            SDL_ClearAudioStream(impl.audioStream);
+          }
+#endif
+
+          const auto audioByteCount =
+            static_cast<int>(frame->audio.size() * sizeof(float));
+          SDL_PutAudioStreamData(
+            impl.audioStream, frame->audio.data_handle(), audioByteCount);
         }
+      }
+#ifndef __EMSCRIPTEN__
+    }
 #endif
 
-        const auto audioByteCount =
-          static_cast<int>(frame->audio.size() * sizeof(float));
-        SDL_PutAudioStreamData(
-          impl.audioStream, frame->audio.data_handle(), audioByteCount);
-      }
-    }
+    // Presented every callback regardless of Impl::paused - a streaming
+    // texture keeps its last uploaded pixels until the next
+    // SDL_UpdateTexture, so re-presenting it while paused just keeps
+    // showing the same frame instead of the window (and the menu bar
+    // that's drawn into the same draw data) going dark or unresponsive.
+    SDL_RenderClear(impl.renderer);
+    // Drawn below the menu bar (impl.menuBarHeight, 0 on Emscripten - see
+    // Impl::menuBarHeight), not stretched to fill the whole window, so the
+    // menu bar never covers the Game Boy screen's top rows.
+    const SDL_FRect destRect = {
+      .x = 0.0F,
+      .y = impl.menuBarHeight,
+      .w = static_cast<float>(WINDOW_WIDTH),
+      .h = static_cast<float>(WINDOW_HEIGHT),
+    };
+    SDL_RenderTexture(impl.renderer, impl.texture, nullptr, &destRect);
+#ifndef __EMSCRIPTEN__
+    ImGui_ImplSDLRenderer3_RenderDrawData(ImGui::GetDrawData(), impl.renderer);
+#endif
+    SDL_RenderPresent(impl.renderer);
   }
 
 #ifdef __EMSCRIPTEN__

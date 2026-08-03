@@ -47,6 +47,11 @@ private:
   static void loadPendingRom(Impl& impl);
   static void renderImGuiFrame(Impl& impl);
 
+  // Shared by the Game menu's Reset item and its Ctrl+R shortcut.
+  static void resetGame(Impl& impl);
+  // Shared by the Game menu's Pause item and its Ctrl+P shortcut.
+  static void togglePause(Impl& impl);
+
   // Emscripten's equivalent of showOpenRomDialog()/onRomFileChosen(): the
   // web page (see web/script.js) has no native file dialog to hook, so it
   // writes an uploaded ROM into Emscripten's virtual filesystem and this
