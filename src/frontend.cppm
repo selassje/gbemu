@@ -45,7 +45,16 @@ private:
   // Split out of frameStep() purely to keep its cognitive complexity under
   // clang-tidy's threshold - each is only ever called from there.
   static void loadPendingRom(Impl& impl);
+  static void pollEvents(Impl& impl);
   static void renderImGuiFrame(Impl& impl);
+
+  // Shared by the Game menu's Reset item and its native-only Ctrl+R
+  // shortcut - the ImGui menu itself now renders on both platforms (see
+  // frontend.cpp's __EMSCRIPTEN__ guards, narrowed to just the File menu).
+  static void resetGame(Impl& impl);
+  // Shared by the Game menu's Pause item and its native-only Ctrl+P
+  // shortcut.
+  static void togglePause(Impl& impl);
 
   // Emscripten's equivalent of showOpenRomDialog()/onRomFileChosen(): the
   // web page (see web/script.js) has no native file dialog to hook, so it
