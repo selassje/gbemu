@@ -45,6 +45,7 @@ private:
   // Split out of frameStep() purely to keep its cognitive complexity under
   // clang-tidy's threshold - each is only ever called from there.
   static void loadPendingRom(Impl& impl);
+  static void pollEvents(Impl& impl);
   static void renderImGuiFrame(Impl& impl);
 
   // Shared by the Game menu's Reset item and its Ctrl+R shortcut.

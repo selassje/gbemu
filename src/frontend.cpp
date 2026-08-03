@@ -550,16 +550,12 @@ App::checkEmscriptenLoadRequest(Impl& impl)
 }
 #endif
 
+// Split out of frameStep() purely to keep its cognitive complexity under
+// clang-tidy's threshold - see loadPendingRom()/renderImGuiFrame()'s own
+// comment for this same reason.
 void
-App::frameStep(void* userData)
+App::pollEvents(Impl& impl)
 {
-  auto& impl = *static_cast<Impl*>(userData);
-
-#ifdef __EMSCRIPTEN__
-  checkEmscriptenLoadRequest(impl);
-#endif
-  loadPendingRom(impl);
-
   SDL_Event event;
   while (SDL_PollEvent(&event)) {
 #ifndef __EMSCRIPTEN__
@@ -596,6 +592,18 @@ App::frameStep(void* userData)
       }
     }
   }
+}
+
+void
+App::frameStep(void* userData)
+{
+  auto& impl = *static_cast<Impl*>(userData);
+
+#ifdef __EMSCRIPTEN__
+  checkEmscriptenLoadRequest(impl);
+#endif
+  loadPendingRom(impl);
+  pollEvents(impl);
 
 #ifndef __EMSCRIPTEN__
   renderImGuiFrame(impl);
