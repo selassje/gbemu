@@ -219,7 +219,7 @@ jobs:
         run: cmake --build --preset ${{ matrix.preset }} --target cmake-format-check
 
   build_emscripten:
-    name: Build (dev_ninja_emscripten)
+    name: Build (release_ninja_emscripten)
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -237,9 +237,9 @@ jobs:
         with:
           version: ${{ env.NINJA_VER }}
 
-      # Sets $EMSDK, which the dev_ninja_emscripten preset's toolchainFile
-      # points at - see the spike notes in CLAUDE.md for why a real Linux
-      # emsdk (not a Windows one) is required.
+      # Sets $EMSDK, which the release_ninja_emscripten preset's
+      # toolchainFile points at - see the spike notes in CLAUDE.md for why a
+      # real Linux emsdk (not a Windows one) is required.
       - name: Setup emsdk
         uses: emscripten-core/setup-emsdk@6ab9eb1bda2574c4ddb79809fc9247783eaf9021 # v14
 
@@ -268,7 +268,7 @@ jobs:
           conan profile detect --force
 
       - name: Configure
-        run: cmake --preset dev_ninja_emscripten
+        run: cmake --preset release_ninja_emscripten
 
       - name: Build
-        run: cmake --build --preset dev_ninja_emscripten
+        run: cmake --build --preset release_ninja_emscripten
