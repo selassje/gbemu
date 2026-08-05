@@ -55,6 +55,12 @@ private:
   // Shared by the Game menu's Pause item and its native-only Ctrl+P
   // shortcut.
   static void togglePause(Impl& impl);
+  // Shared by the Audio menu's Enabled item and its Ctrl+A shortcut.
+  static void toggleAudioEnabled(Impl& impl);
+  // Resumes/pauses the audio device to match Impl::audioEnabled and
+  // Impl::paused - shared by togglePause() and toggleAudioEnabled() since
+  // either one flipping can change whether the device should be playing.
+  static void syncAudioDeviceState(Impl& impl);
 
   // Emscripten's equivalent of showOpenRomDialog()/onRomFileChosen(): the
   // web page (see web/script.js) has no native file dialog to hook, so it

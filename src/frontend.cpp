@@ -385,6 +385,11 @@ struct App::Impl
   // but still presents every callback, so the menu bar stays interactive
   // instead of the window appearing frozen.
   bool paused = false;
+  // Toggled by toggleAudioEnabled() - the Audio menu's Enabled item on both
+  // platforms, or Ctrl+A. Off by default: run() leaves the audio device
+  // paused rather than resuming it, so a session is silent until the user
+  // opts in.
+  bool audioEnabled = false;
   std::optional<std::string> error;
   // Written from SDL's file-dialog callback (see showOpenRomDialog below),
   // which SDL may invoke from a thread other than this one - guarded so
@@ -421,19 +426,35 @@ App::resetGame(Impl& impl)
 }
 
 void
+App::syncAudioDeviceState(Impl& impl)
+{
+  if (impl.audioStream == nullptr) {
+    return;
+  }
+  // Mutes/resumes immediately instead of leaving already-queued samples to
+  // drain out on their own - see run()'s SDL_OpenAudioDeviceStream call for
+  // why a stream needs an explicit resume/pause at all. Playing requires
+  // both: enabled by the user (Impl::audioEnabled) and not paused
+  // (Impl::paused) - either one alone should mute.
+  if (impl.audioEnabled && !impl.paused) {
+    SDL_ResumeAudioStreamDevice(impl.audioStream);
+  } else {
+    SDL_PauseAudioStreamDevice(impl.audioStream);
+  }
+}
+
+void
 App::togglePause(Impl& impl)
 {
   impl.paused = !impl.paused;
-  if (impl.audioStream != nullptr) {
-    // Mutes immediately instead of leaving already-queued samples to drain
-    // out on their own - see run()'s matching SDL_ResumeAudioStreamDevice
-    // call for why a stream needs an explicit resume/pause at all.
-    if (impl.paused) {
-      SDL_PauseAudioStreamDevice(impl.audioStream);
-    } else {
-      SDL_ResumeAudioStreamDevice(impl.audioStream);
-    }
-  }
+  syncAudioDeviceState(impl);
+}
+
+void
+App::toggleAudioEnabled(Impl& impl)
+{
+  impl.audioEnabled = !impl.audioEnabled;
+  syncAudioDeviceState(impl);
 }
 
 #ifndef __EMSCRIPTEN__
@@ -498,6 +519,12 @@ App::renderImGuiFrame(Impl& impl)
       }
       if (ImGui::MenuItem("Pause", "Ctrl+P", impl.paused)) {
         togglePause(impl);
+      }
+      ImGui::EndMenu();
+    }
+    if (ImGui::BeginMenu("Audio")) {
+      if (ImGui::MenuItem("Enabled", "Ctrl+A", impl.audioEnabled)) {
+        toggleAudioEnabled(impl);
       }
       ImGui::EndMenu();
     }
@@ -581,6 +608,10 @@ App::pollEvents(Impl& impl)
                event.key.scancode == SDL_SCANCODE_P &&
                (event.key.mod & SDL_KMOD_CTRL) != 0) {
       togglePause(impl);
+    } else if (event.type == SDL_EVENT_KEY_DOWN && !event.key.repeat &&
+               event.key.scancode == SDL_SCANCODE_A &&
+               (event.key.mod & SDL_KMOD_CTRL) != 0) {
+      toggleAudioEnabled(impl);
     } else if (event.type == SDL_EVENT_KEY_DOWN ||
                event.type == SDL_EVENT_KEY_UP) {
       if (event.key.repeat) {
@@ -664,7 +695,7 @@ App::frameStep(void* userData)
                           nullptr,
                           frame->pixels.data_handle(),
                           static_cast<int>(gbemu::SCREEN_WIDTH * 3));
-        if (impl.audioStream != nullptr) {
+        if (impl.audioStream != nullptr && impl.audioEnabled) {
 #ifndef __EMSCRIPTEN__
           // Bound the stream's internal backlog before adding this frame's
           // samples to it - see AUDIO_MAX_QUEUED_BYTES's own comment for why
@@ -861,12 +892,12 @@ App::run(std::optional<std::string_view> romPath, gbemu::Mode mode)
     std::cerr << "Warning: SDL_OpenAudioDeviceStream failed, running "
                  "without audio: "
               << SDL_GetError() << '\n';
-  } else {
-    // Streams bound to a device via SDL_OpenAudioDeviceStream start
-    // paused - without this, SDL_PutAudioStreamData()'s queued samples
-    // would never actually reach the device.
-    SDL_ResumeAudioStreamDevice(m_impl->audioStream);
   }
+  // Streams bound to a device via SDL_OpenAudioDeviceStream start paused,
+  // which already matches Impl::audioEnabled's off-by-default state - this
+  // call just expresses that default in one place (syncAudioDeviceState)
+  // rather than relying on it implicitly.
+  syncAudioDeviceState(*m_impl);
 
   // Emscripten: the browser owns the main loop (blocking here would freeze
   // the tab, since it never yields back to the JS event loop) and paces it
