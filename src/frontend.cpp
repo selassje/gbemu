@@ -390,6 +390,11 @@ struct App::Impl
   // paused rather than resuming it, so a session is silent until the user
   // opts in.
   bool audioEnabled = false;
+  // Mirrors gameBoy's own model, which GameBoy itself doesn't expose a
+  // getter for - tracked here purely so the Game menu's Mode submenu can
+  // show a checkmark against whichever option is currently active. Set
+  // from run()'s own mode parameter, then kept in sync by setMode().
+  gbemu::Mode currentMode = gbemu::Mode::Auto;
   std::optional<std::string> error;
   // Written from SDL's file-dialog callback (see showOpenRomDialog below),
   // which SDL may invoke from a thread other than this one - guarded so
@@ -422,6 +427,20 @@ App::resetGame(Impl& impl)
   // NOLINTNEXTLINE(bugprone-unchecked-optional-access)
   if (const auto result = impl.gameBoy->reset(); !result) {
     std::cerr << "Warning: failed to reset: " << result.error() << '\n';
+  }
+}
+
+void
+App::setMode(Impl& impl, gbemu::Mode mode)
+{
+  // Impl::currentMode is updated unconditionally, even on error below -
+  // GameBoy::setMode() itself updates its own model the same way (see its
+  // own comment), so this stays in sync with what the Mode submenu's
+  // checkmark should reflect either way.
+  impl.currentMode = mode;
+  // NOLINTNEXTLINE(bugprone-unchecked-optional-access) - see resetGame().
+  if (const auto result = impl.gameBoy->setMode(mode); !result) {
+    std::cerr << "Warning: failed to set mode: " << result.error() << '\n';
   }
 }
 
@@ -494,6 +513,24 @@ App::showOpenRomDialog(Impl& impl)
 #endif
 
 void
+App::renderModeMenu(Impl& impl)
+{
+  if (!ImGui::BeginMenu("Mode")) {
+    return;
+  }
+  if (ImGui::MenuItem("Auto", nullptr, impl.currentMode == gbemu::Mode::Auto)) {
+    setMode(impl, gbemu::Mode::Auto);
+  }
+  if (ImGui::MenuItem("DMG", nullptr, impl.currentMode == gbemu::Mode::Dmg)) {
+    setMode(impl, gbemu::Mode::Dmg);
+  }
+  if (ImGui::MenuItem("CGB", nullptr, impl.currentMode == gbemu::Mode::Cgb)) {
+    setMode(impl, gbemu::Mode::Cgb);
+  }
+  ImGui::EndMenu();
+}
+
+void
 App::renderImGuiFrame(Impl& impl)
 {
   ImGui_ImplSDLRenderer3_NewFrame();
@@ -520,6 +557,7 @@ App::renderImGuiFrame(Impl& impl)
       if (ImGui::MenuItem("Pause", "Ctrl+P", impl.paused)) {
         togglePause(impl);
       }
+      renderModeMenu(impl);
       ImGui::EndMenu();
     }
     if (ImGui::BeginMenu("Audio")) {
@@ -787,6 +825,7 @@ App::run(std::optional<std::string_view> romPath, gbemu::Mode mode)
   }
 
   m_impl->gameBoy.emplace(mode);
+  m_impl->currentMode = mode;
   const auto loadResult = m_impl->gameBoy->loadRom(rom);
   if (!loadResult) {
     return std::unexpected(loadResult.error());

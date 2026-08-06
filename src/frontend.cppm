@@ -47,6 +47,10 @@ private:
   static void loadPendingRom(Impl& impl);
   static void pollEvents(Impl& impl);
   static void renderImGuiFrame(Impl& impl);
+  // Split out of renderImGuiFrame() purely to keep its cognitive complexity
+  // under clang-tidy's threshold - only ever called from there, as the
+  // Game menu's Mode submenu.
+  static void renderModeMenu(Impl& impl);
 
   // Shared by the Game menu's Reset item and its native-only Ctrl+R
   // shortcut - the ImGui menu itself now renders on both platforms (see
@@ -55,6 +59,10 @@ private:
   // Shared by the Game menu's Pause item and its native-only Ctrl+P
   // shortcut.
   static void togglePause(Impl& impl);
+  // Backs the Game menu's Mode submenu (Auto/DMG/CGB) - no keyboard
+  // shortcut, there being three mutually-exclusive options rather than one
+  // to toggle.
+  static void setMode(Impl& impl, gbemu::Mode mode);
   // Shared by the Audio menu's Enabled item and its Ctrl+A shortcut.
   static void toggleAudioEnabled(Impl& impl);
   // Resumes/pauses the audio device to match Impl::audioEnabled and
