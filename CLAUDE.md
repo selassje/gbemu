@@ -206,12 +206,14 @@ project itself uses `Emscripten.cmake` as its toolchain:
 ## Architecture
 
 **Module structure**: mirrors `libgbemu`'s interface/implementation split, but
-without a separate `import/` directory - `libgbemu` splits that out because
-it's a library meant to be consumed externally (the public entry point vs.
-internal partitions); this repo isn't consumed by anything, so `frontend.cppm`
-(the primary module interface unit, defining the `App` facade directly - same
-pattern as `libgbemu`'s `import/gbemu.cppm` defining `GameBoy` directly) lives
-straight in `src/`, paired with `src/frontend.cpp` (`module frontend;` +
+without a separate `modules/` directory - `libgbemu` keeps every `.cppm`
+interface unit (its primary unit and all partitions alike) together in
+`modules/`, apart from the `.cpp` implementation files in `src/`; this repo
+isn't consumed by anything and has only one interface unit, so
+`frontend.cppm` (the primary module interface unit, defining the `App` facade
+directly - same pattern as `libgbemu`'s `modules/gbemu.cppm` defining
+`GameBoy` directly) lives straight in `src/`, paired with `src/frontend.cpp`
+(`module frontend;` +
 `namespace frontend { ... }`). `App` hides SDL's window/renderer handles
 behind an incomplete
 `Impl` (pimpl) so the interface unit itself never needs `<SDL3/SDL.h>` -
