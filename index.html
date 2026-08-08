@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+  <meta charset="utf-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+  <meta lang="en" />
+  <meta content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=1" name="viewport" />
+  <title>gbemu</title>
+  <link rel="stylesheet" href="styles.css" />
+  <link rel="icon" type="image/x-icon" href="favicon.ico" />
+  <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet">
+</head>
+
+<body>
+  <div class="layout">
+    <aside id="sidenav">
+      <h2>GBEMU</h2>
+
+      <div class="side-group">
+        <button class="icon-btn" onclick="upload_rom_file_btn_click()" title="Upload ROM">
+          <img src="img/upload.svg" />
+          <span>Upload ROM</span>
+        </button>
+        <input type="file" id="upload_rom_file" accept=".gb,.gbc" />
+      </div>
+
+      <div id="download_rom_files">
+        <h3>ROM Files</h3>
+        <ul id="rom_list"></ul>
+      </div>
+    </aside>
+
+    <main id="main">
+      <div class="canvas-frame">
+        <canvas id="canvas"></canvas>
+      </div>
+      <script>
+        var Module = {
+          canvas: document.querySelector('#canvas'),
+        };
+      </script>
+      <script src="gbemu.js"></script>
+      <script src="script.js"></script>
+
+      </br>
+      <section class="card">
+        <h3>About</h3>
+        <p>
+          Welcome to <strong>GBEMU</strong>, a Game Boy / Game Boy Color emulator running directly in your browser.
+        </p>
+        <p>
+          Upload a .gb or .gbc ROM using the sidebar, then load it from the list.
+        </p>
+      </section>
+
+      <section class="card">
+        <h3>Controller</h3>
+        <div class="controller-diagram">
+          <div class="controller-body">
+            <div class="dpad">
+              <span class="glyph glyph-up"></span>
+              <div class="dpad-middle">
+                <span class="glyph glyph-left"></span>
+                <span class="dpad-center"></span>
+                <span class="glyph glyph-right"></span>
+              </div>
+              <span class="glyph glyph-down"></span>
+            </div>
+
+            <div class="buttons">
+              <span class="glyph glyph-b"></span>
+              <span class="glyph glyph-a"></span>
+            </div>
+
+            <div class="center-buttons">
+              <span class="glyph glyph-select"></span>
+              <span class="glyph glyph-start"></span>
+            </div>
+          </div>
+
+          <div class="controller-labels">
+            <span>D-PAD</span>
+            <span>B</span>
+            <span>A</span>
+            <span>SELECT</span>
+            <span>START</span>
+          </div>
+        </div>
+
+        <p>Key mapping:</p>
+        <table>
+          <thead>
+            <tr>
+              <th>Game Boy</th>
+              <th>Key</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><span class="glyph glyph-a"></span>A</td>
+              <td>X</td>
+            </tr>
+            <tr>
+              <td><span class="glyph glyph-b"></span>B</td>
+              <td>Z</td>
+            </tr>
+            <tr>
+              <td><span class="glyph glyph-select"></span>Select</td>
+              <td>Backspace</td>
+            </tr>
+            <tr>
+              <td><span class="glyph glyph-start"></span>Start</td>
+              <td>Enter</td>
+            </tr>
+            <tr>
+              <td><span class="glyph glyph-up"></span>Up</td>
+              <td>↑</td>
+            </tr>
+            <tr>
+              <td><span class="glyph glyph-down"></span>Down</td>
+              <td>↓</td>
+            </tr>
+            <tr>
+              <td><span class="glyph glyph-left"></span>Left</td>
+              <td>←</td>
+            </tr>
+            <tr>
+              <td><span class="glyph glyph-right"></span>Right</td>
+              <td>→</td>
+            </tr>
+          </tbody>
+        </table>
+        <p class="hint">
+          </br>
+          Key mapping is currently fixed - custom bindings aren't supported yet.
+        </p>
+      </section>
+    </main>
+  </div>
+</body>
+
+</html>
