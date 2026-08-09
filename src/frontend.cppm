@@ -70,6 +70,14 @@ private:
   // either one flipping can change whether the device should be playing.
   static void syncAudioDeviceState(Impl& impl);
 
+  // Shared by the Game menu's Save State/Load State items and their
+  // native-only Ctrl+S/Ctrl+L shortcuts - native only for now (see the
+  // __EMSCRIPTEN__ guard around their definitions in frontend.cpp):
+  // Emscripten's virtual filesystem doesn't persist across a page reload
+  // without additional IDBFS wiring, deferred as separate follow-up work.
+  static void saveGameState(Impl& impl);
+  static void loadGameState(Impl& impl);
+
   // Emscripten's equivalent of showOpenRomDialog()/onRomFileChosen(): the
   // web page (see web/script.js) has no native file dialog to hook, so it
   // writes an uploaded ROM into Emscripten's virtual filesystem and this

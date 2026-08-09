@@ -390,11 +390,13 @@ struct App::Impl
   // paused rather than resuming it, so a session is silent until the user
   // opts in.
   bool audioEnabled = false;
-  // Mirrors gameBoy's own model, which GameBoy itself doesn't expose a
-  // getter for - tracked here purely so the Game menu's Mode submenu can
-  // show a checkmark against whichever option is currently active. Set
-  // from run()'s own mode parameter, then kept in sync by setMode().
-  gbemu::Mode currentMode = gbemu::Mode::Auto;
+  // The currently-loaded ROM's own file path, when loaded from a real file
+  // (run()'s romPath parameter, or a file chosen via Open ROM) - unset while
+  // running the placeholder ROM (see makePlaceholderRom()). saveGameState()/
+  // loadGameState() derive their file's path from this (see
+  // saveStatePath()) - nothing else in Impl already tracks a loaded ROM's
+  // path once loadRom() has consumed its buffer.
+  std::optional<std::string> currentRomPath;
   std::optional<std::string> error;
   // Written from SDL's file-dialog callback (see showOpenRomDialog below),
   // which SDL may invoke from a thread other than this one - guarded so
@@ -433,11 +435,6 @@ App::resetGame(Impl& impl)
 void
 App::setMode(Impl& impl, gbemu::Mode mode)
 {
-  // Impl::currentMode is updated unconditionally, even on error below -
-  // GameBoy::setMode() itself updates its own model the same way (see its
-  // own comment), so this stays in sync with what the Mode submenu's
-  // checkmark should reflect either way.
-  impl.currentMode = mode;
   // NOLINTNEXTLINE(bugprone-unchecked-optional-access) - see resetGame().
   if (const auto result = impl.gameBoy->setMode(mode); !result) {
     std::cerr << "Warning: failed to set mode: " << result.error() << '\n';
@@ -510,6 +507,74 @@ App::showOpenRomDialog(Impl& impl)
                          nullptr,
                          false);
 }
+
+namespace {
+
+// `<romPath with its own extension replaced>.state`, not appended after it -
+// so a state file doesn't stack a second extension onto the ROM's own name.
+// One fixed slot per ROM path, not multiple numbered slots - matching
+// GameBoy::saveState()/loadState()'s own single-snapshot shape.
+std::filesystem::path
+saveStatePath(const std::string& romPath)
+{
+  auto path = std::filesystem::path(romPath);
+  path.replace_extension(".state");
+  return path;
+}
+
+}
+
+void
+App::saveGameState(Impl& impl)
+{
+  if (!impl.currentRomPath) {
+    std::cerr << "Warning: no ROM loaded, nothing to save a state for\n";
+    return;
+  }
+  // frameStep() only ever runs as run()'s main-loop callback, and run()
+  // always emplace()s gameBoy before entering that loop - see resetGame()'s
+  // own comment.
+  // NOLINTNEXTLINE(bugprone-unchecked-optional-access)
+  const auto state = impl.gameBoy->saveState();
+  const auto path = saveStatePath(*impl.currentRomPath);
+  std::ofstream file{ path, std::ios::binary };
+  if (!file) {
+    std::cerr << "Warning: failed to open " << path.string()
+              << " for writing\n";
+    return;
+  }
+  // std::ostream::write() requires const char* - no portable
+  // reinterpret_cast-free way to write a raw std::uint8_t buffer to a
+  // binary stream.
+  // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast)
+  file.write(reinterpret_cast<const char*>(state.data()),
+             static_cast<std::streamsize>(state.size()));
+  if (!file) {
+    std::cerr << "Warning: failed to write " << path.string() << '\n';
+  }
+}
+
+void
+App::loadGameState(Impl& impl)
+{
+  if (!impl.currentRomPath) {
+    std::cerr << "Warning: no ROM loaded, nothing to load a state into\n";
+    return;
+  }
+  const auto path = saveStatePath(*impl.currentRomPath);
+  std::ifstream file{ path, std::ios::binary };
+  if (!file) {
+    std::cerr << "Warning: no save state found at " << path.string() << '\n';
+    return;
+  }
+  const std::vector<std::uint8_t> state{ std::istreambuf_iterator<char>(file),
+                                         std::istreambuf_iterator<char>() };
+  // NOLINTNEXTLINE(bugprone-unchecked-optional-access) - see saveGameState().
+  if (const auto result = impl.gameBoy->loadState(state); !result) {
+    std::cerr << "Warning: failed to load " << path.string() << ": "
+              << result.error() << '\n';
+  }
+}
 #endif
 
 void
@@ -518,13 +583,15 @@ App::renderModeMenu(Impl& impl)
   if (!ImGui::BeginMenu("Mode")) {
     return;
   }
-  if (ImGui::MenuItem("Auto", nullptr, impl.currentMode == gbemu::Mode::Auto)) {
+  // NOLINTNEXTLINE(bugprone-unchecked-optional-access) - see resetGame().
+  const auto currentMode = impl.gameBoy->getMode();
+  if (ImGui::MenuItem("Auto", nullptr, currentMode == gbemu::Mode::Auto)) {
     setMode(impl, gbemu::Mode::Auto);
   }
-  if (ImGui::MenuItem("DMG", nullptr, impl.currentMode == gbemu::Mode::Dmg)) {
+  if (ImGui::MenuItem("DMG", nullptr, currentMode == gbemu::Mode::Dmg)) {
     setMode(impl, gbemu::Mode::Dmg);
   }
-  if (ImGui::MenuItem("CGB", nullptr, impl.currentMode == gbemu::Mode::Cgb)) {
+  if (ImGui::MenuItem("CGB", nullptr, currentMode == gbemu::Mode::Cgb)) {
     setMode(impl, gbemu::Mode::Cgb);
   }
   ImGui::EndMenu();
@@ -557,6 +624,19 @@ App::renderImGuiFrame(Impl& impl)
       if (ImGui::MenuItem("Pause", "Ctrl+P", impl.paused)) {
         togglePause(impl);
       }
+#ifndef __EMSCRIPTEN__
+      // Native only - see saveGameState()/loadGameState()'s own
+      // __EMSCRIPTEN__ guard for why.
+      ImGui::Separator();
+      if (ImGui::MenuItem(
+            "Save State", "Ctrl+S", false, impl.currentRomPath.has_value())) {
+        saveGameState(impl);
+      }
+      if (ImGui::MenuItem(
+            "Load State", "Ctrl+L", false, impl.currentRomPath.has_value())) {
+        loadGameState(impl);
+      }
+#endif
       renderModeMenu(impl);
       ImGui::EndMenu();
     }
@@ -592,6 +672,8 @@ App::loadPendingRom(Impl& impl)
     // NOLINTNEXTLINE(bugprone-unchecked-optional-access)
   } else if (const auto loadResult = impl.gameBoy->loadRom(*rom); !loadResult) {
     std::cerr << "Warning: failed to load ROM: " << loadResult.error() << '\n';
+  } else {
+    impl.currentRomPath = *romToLoad;
   }
 }
 
@@ -646,6 +728,16 @@ App::pollEvents(Impl& impl)
                event.key.scancode == SDL_SCANCODE_P &&
                (event.key.mod & SDL_KMOD_CTRL) != 0) {
       togglePause(impl);
+#ifndef __EMSCRIPTEN__
+    } else if (event.type == SDL_EVENT_KEY_DOWN && !event.key.repeat &&
+               event.key.scancode == SDL_SCANCODE_S &&
+               (event.key.mod & SDL_KMOD_CTRL) != 0) {
+      saveGameState(impl);
+    } else if (event.type == SDL_EVENT_KEY_DOWN && !event.key.repeat &&
+               event.key.scancode == SDL_SCANCODE_L &&
+               (event.key.mod & SDL_KMOD_CTRL) != 0) {
+      loadGameState(impl);
+#endif
     } else if (event.type == SDL_EVENT_KEY_DOWN && !event.key.repeat &&
                event.key.scancode == SDL_SCANCODE_A &&
                (event.key.mod & SDL_KMOD_CTRL) != 0) {
@@ -822,10 +914,10 @@ App::run(std::optional<std::string_view> romPath, gbemu::Mode mode)
     }
     romFileBuffer = std::move(*result);
     rom = romFileBuffer;
+    m_impl->currentRomPath = std::string(*romPath);
   }
 
   m_impl->gameBoy.emplace(mode);
-  m_impl->currentMode = mode;
   const auto loadResult = m_impl->gameBoy->loadRom(rom);
   if (!loadResult) {
     return std::unexpected(loadResult.error());
