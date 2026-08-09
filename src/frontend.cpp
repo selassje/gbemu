@@ -507,36 +507,26 @@ App::showOpenRomDialog(Impl& impl)
                          nullptr,
                          false);
 }
+#endif
 
-namespace {
-
-// `<romPath with its own extension replaced>.state`, not appended after it -
-// so a state file doesn't stack a second extension onto the ROM's own name.
-// One fixed slot per ROM path, not multiple numbered slots - matching
-// GameBoy::saveState()/loadState()'s own single-snapshot shape.
-std::filesystem::path
-saveStatePath(const std::string& romPath)
-{
-  auto path = std::filesystem::path(romPath);
-  path.replace_extension(".state");
-  return path;
-}
-
-}
-
+// The actual GameBoy::saveState()/loadState() <-> file byte I/O - shared by
+// both platforms' own save-state entry points (native's saveGameState()/
+// loadGameState() below, and Emscripten's checkEmscriptenSaveStateRequest()/
+// checkEmscriptenLoadStateRequest() further down), which differ only in how
+// each arrives at the path to use. Not itself __EMSCRIPTEN__-guarded:
+// std::ofstream/ifstream work the same against Emscripten's virtual
+// filesystem as they do against a real one (see checkEmscriptenLoadRequest()'s
+// own use of plain std::ifstream for the same reason) - only *persisting*
+// that filesystem across a page reload needs the browser-side IDBFS mount
+// this function itself doesn't need to know about.
 void
-App::saveGameState(Impl& impl)
+App::writeStateToFile(Impl& impl, const std::filesystem::path& path)
 {
-  if (!impl.currentRomPath) {
-    std::cerr << "Warning: no ROM loaded, nothing to save a state for\n";
-    return;
-  }
   // frameStep() only ever runs as run()'s main-loop callback, and run()
   // always emplace()s gameBoy before entering that loop - see resetGame()'s
   // own comment.
   // NOLINTNEXTLINE(bugprone-unchecked-optional-access)
   const auto state = impl.gameBoy->saveState();
-  const auto path = saveStatePath(*impl.currentRomPath);
   std::ofstream file{ path, std::ios::binary };
   if (!file) {
     std::cerr << "Warning: failed to open " << path.string()
@@ -555,13 +545,8 @@ App::saveGameState(Impl& impl)
 }
 
 void
-App::loadGameState(Impl& impl)
+App::readStateFromFile(Impl& impl, const std::filesystem::path& path)
 {
-  if (!impl.currentRomPath) {
-    std::cerr << "Warning: no ROM loaded, nothing to load a state into\n";
-    return;
-  }
-  const auto path = saveStatePath(*impl.currentRomPath);
   std::ifstream file{ path, std::ios::binary };
   if (!file) {
     std::cerr << "Warning: no save state found at " << path.string() << '\n';
@@ -569,11 +554,51 @@ App::loadGameState(Impl& impl)
   }
   const std::vector<std::uint8_t> state{ std::istreambuf_iterator<char>(file),
                                          std::istreambuf_iterator<char>() };
-  // NOLINTNEXTLINE(bugprone-unchecked-optional-access) - see saveGameState().
+  // NOLINTNEXTLINE(bugprone-unchecked-optional-access) - see above.
   if (const auto result = impl.gameBoy->loadState(state); !result) {
     std::cerr << "Warning: failed to load " << path.string() << ": "
               << result.error() << '\n';
   }
+}
+
+#ifndef __EMSCRIPTEN__
+namespace {
+
+// `<romPath with its own extension replaced>.state`, not appended after it -
+// so a state file doesn't stack a second extension onto the ROM's own name.
+// One fixed slot per ROM path, not multiple numbered slots - matching
+// GameBoy::saveState()/loadState()'s own single-snapshot shape. Native
+// only: Emscripten's own save states are named by the user through the web
+// page's sidebar instead (see checkEmscriptenSaveStateRequest() below),
+// which supports multiple named slots rather than this single fixed one.
+std::filesystem::path
+saveStatePath(const std::string& romPath)
+{
+  auto path = std::filesystem::path(romPath);
+  path.replace_extension(".state");
+  return path;
+}
+
+}
+
+void
+App::saveGameState(Impl& impl)
+{
+  if (!impl.currentRomPath) {
+    std::cerr << "Warning: no ROM loaded, nothing to save a state for\n";
+    return;
+  }
+  writeStateToFile(impl, saveStatePath(*impl.currentRomPath));
+}
+
+void
+App::loadGameState(Impl& impl)
+{
+  if (!impl.currentRomPath) {
+    std::cerr << "Warning: no ROM loaded, nothing to load a state into\n";
+    return;
+  }
+  readStateFromFile(impl, saveStatePath(*impl.currentRomPath));
 }
 #endif
 
@@ -678,6 +703,30 @@ App::loadPendingRom(Impl& impl)
 }
 
 #ifdef __EMSCRIPTEN__
+namespace {
+
+// Reads and deletes a one-shot request marker file, if present, returning
+// the (non-empty) filename it named - shared by checkEmscriptenLoadRequest()
+// and its save-state equivalents below, which otherwise differ only in
+// which path they poll and what they do with the filename it names.
+std::optional<std::string>
+readAndClearRequestFile(const char* requestPath)
+{
+  if (!std::filesystem::exists(requestPath)) {
+    return std::nullopt;
+  }
+  std::ifstream file{ requestPath, std::ios::binary };
+  const std::string filename{ std::istreambuf_iterator<char>(file),
+                              std::istreambuf_iterator<char>() };
+  std::filesystem::remove(requestPath);
+  if (filename.empty()) {
+    return std::nullopt;
+  }
+  return filename;
+}
+
+}
+
 void
 App::checkEmscriptenLoadRequest(Impl& impl)
 {
@@ -686,19 +735,46 @@ App::checkEmscriptenLoadRequest(Impl& impl)
   // /gbemu_roms/<filename> by its upload handler - mirrors the native Open
   // ROM dialog's callback, just driven by the page instead of SDL. See
   // script.js's own comment on why this isn't just "/roms".
-  static constexpr const char* requestPath = "/gbemu_roms/.load_request";
-  if (!std::filesystem::exists(requestPath)) {
-    return;
-  }
-  std::ifstream file{ requestPath, std::ios::binary };
-  const std::string filename{ std::istreambuf_iterator<char>(file),
-                              std::istreambuf_iterator<char>() };
-  std::filesystem::remove(requestPath);
-  if (filename.empty()) {
+  const auto filename = readAndClearRequestFile("/gbemu_roms/.load_request");
+  if (!filename) {
     return;
   }
   const std::scoped_lock lock{ impl.pendingRomPathMutex };
-  impl.pendingRomPath = "/gbemu_roms/" + filename;
+  impl.pendingRomPath = "/gbemu_roms/" + *filename;
+}
+
+// web/script.js's saveState(filename)/loadState(filename) write the chosen
+// filename here as a one-shot trigger - mirror checkEmscriptenLoadRequest()
+// above, just against /gbemu_saves and driving writeStateToFile()/
+// readStateFromFile() directly instead of the pendingRomPath hand-off
+// (there's no cross-thread callback involved here the way SDL's file dialog
+// needs one for, so nothing else needs to happen on the next frameStep()).
+void
+App::checkEmscriptenSaveStateRequest(Impl& impl)
+{
+  const auto filename = readAndClearRequestFile("/gbemu_saves/.save_request");
+  if (!filename) {
+    return;
+  }
+  if (!impl.currentRomPath) {
+    std::cerr << "Warning: no ROM loaded, nothing to save a state for\n";
+    return;
+  }
+  writeStateToFile(impl, std::filesystem::path("/gbemu_saves") / *filename);
+}
+
+void
+App::checkEmscriptenLoadStateRequest(Impl& impl)
+{
+  const auto filename = readAndClearRequestFile("/gbemu_saves/.load_request");
+  if (!filename) {
+    return;
+  }
+  if (!impl.currentRomPath) {
+    std::cerr << "Warning: no ROM loaded, nothing to load a state into\n";
+    return;
+  }
+  readStateFromFile(impl, std::filesystem::path("/gbemu_saves") / *filename);
 }
 
 #endif
@@ -766,6 +842,8 @@ App::frameStep(void* userData)
 
 #ifdef __EMSCRIPTEN__
   checkEmscriptenLoadRequest(impl);
+  checkEmscriptenSaveStateRequest(impl);
+  checkEmscriptenLoadStateRequest(impl);
 #endif
   loadPendingRom(impl);
   pollEvents(impl);

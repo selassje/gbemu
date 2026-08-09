@@ -29,6 +29,25 @@
         <h3>ROM Files</h3>
         <ul id="rom_list"></ul>
       </div>
+
+      <div class="side-group">
+        <div class="save-name-row">
+          <input type="text" id="new_save_name" value="save1" title="Save state name" />
+          <button class="icon-btn" onclick="new_save_state()" title="Save the running game's current state">
+            <img src="img/save.svg" />
+          </button>
+        </div>
+        <button class="icon-btn" onclick="upload_save_file_btn_click()" title="Upload Save State">
+          <img src="img/upload.svg" />
+          <span>Upload Save</span>
+        </button>
+        <input type="file" id="upload_save_file" accept=".state" />
+      </div>
+
+      <div id="download_save_files">
+        <h3>Save States</h3>
+        <ul id="save_list"></ul>
+      </div>
     </aside>
 
     <main id="main">
@@ -51,6 +70,12 @@
         </p>
         <p>
           Upload a .gb or .gbc ROM using the sidebar, then load it from the list.
+        </p>
+        <p>
+          Save States let you capture and restore the running game's exact state - name
+          one with the sidebar's Save State button, then load, overwrite, or delete it
+          from the Save States list. They persist in this browser across page reloads,
+          same as uploaded ROMs.
         </p>
       </section>
 

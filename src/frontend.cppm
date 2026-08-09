@@ -70,11 +70,16 @@ private:
   // either one flipping can change whether the device should be playing.
   static void syncAudioDeviceState(Impl& impl);
 
-  // Shared by the Game menu's Save State/Load State items and their
-  // native-only Ctrl+S/Ctrl+L shortcuts - native only for now (see the
-  // __EMSCRIPTEN__ guard around their definitions in frontend.cpp):
-  // Emscripten's virtual filesystem doesn't persist across a page reload
-  // without additional IDBFS wiring, deferred as separate follow-up work.
+  // The actual GameBoy::saveState()/loadState() <-> file byte I/O, shared by
+  // both platforms' own save-state entry points below - they differ only in
+  // how each arrives at the file path to use.
+  static void writeStateToFile(Impl& impl, const std::filesystem::path& path);
+  static void readStateFromFile(Impl& impl, const std::filesystem::path& path);
+
+  // Native: the Game menu's Save State/Load State items and their
+  // Ctrl+S/Ctrl+L shortcuts, deriving a single fixed <romPath>.state path
+  // from Impl::currentRomPath - see their own __EMSCRIPTEN__ guard in
+  // frontend.cpp.
   static void saveGameState(Impl& impl);
   static void loadGameState(Impl& impl);
 
@@ -84,6 +89,15 @@ private:
   // polls for a one-shot "load this one" marker file instead - see the
   // definition in frontend.cpp.
   static void checkEmscriptenLoadRequest(Impl& impl);
+  // web/script.js's own save-state sidebar list writes a user-chosen
+  // filename into one of these one-shot request markers under
+  // /gbemu_saves, mirroring checkEmscriptenLoadRequest() above - IDBFS
+  // persistence itself is handled entirely on the JS side (see
+  // script.js's own comment), this only needs to notice the request and
+  // perform the save/load through writeStateToFile()/readStateFromFile()
+  // above.
+  static void checkEmscriptenSaveStateRequest(Impl& impl);
+  static void checkEmscriptenLoadStateRequest(Impl& impl);
 };
 
 }
