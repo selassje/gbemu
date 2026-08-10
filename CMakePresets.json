@@ -243,6 +243,24 @@
       }
     },
     {
+      "name": "release_ninja_clang",
+      "displayName": "release (Ninja, clang) - run from a Developer PowerShell/Command Prompt",
+      "inherits": "dev_windows",
+      "generator": "Ninja",
+      "toolchainFile": "${sourceDir}/builds/release_ninja_clang/generators/conan_toolchain.cmake",
+      "binaryDir": "${sourceDir}/builds/release_ninja_clang/build",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "CMAKE_EXPERIMENTAL_CXX_IMPORT_STD": "f35a9ac6-8463-4d38-8eec-5d6008153e7d",
+        "CMAKE_CXX_MODULE_STD": "OFF",
+        "CMAKE_TRY_COMPILE_CONFIGURATION": "Release"
+      },
+      "environment": {
+        "CXX": "clang++",
+        "CC": "clang"
+      }
+    },
+    {
       "name": "release_ninja_emscripten",
       "displayName": "release (Ninja, Emscripten/WASM) - requires `source <emsdk>/emsdk_env.sh` first, sets $env{EMSDK}",
       "inherits": "dev_linux",
@@ -371,6 +389,10 @@
       "configurePreset": "release_ninja_clang_linux"
     },
     {
+      "name": "release_ninja_clang",
+      "configurePreset": "release_ninja_clang"
+    },
+    {
       "name": "release_ninja_emscripten",
       "configurePreset": "release_ninja_emscripten"
     },
@@ -480,6 +502,11 @@
       "name": "release_ninja_clang_linux",
       "inherits": "default",
       "configurePreset": "release_ninja_clang_linux"
+    },
+    {
+      "name": "release_ninja_clang",
+      "inherits": "default",
+      "configurePreset": "release_ninja_clang"
     },
     {
       "name": "dev_vs_msvc",

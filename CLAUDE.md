@@ -270,6 +270,31 @@ matters here because this is the first time that workaround is shared by
 single-target case. Worth revisiting if CMake ever escalates this from a
 diagnostic to a real error.
 
+**`release_ninja_clang` needs `CMAKE_TRY_COMPILE_CONFIGURATION: Release`
+explicitly set (already in the preset)** - without it, CMake's own internal
+ABI-detection `try_compile` (`CMakeDetermineCompilerABI.cmake`) hardcodes its
+throwaway probe project's config to `Debug` regardless of the outer build's
+`CMAKE_BUILD_TYPE`. Conan's toolchain sets `CMAKE_MSVC_RUNTIME_LIBRARY` as a
+generator expression keyed on the *outer* config
+(`$<$<CONFIG:Release>:MultiThreadedDLL>` here); inside that always-`Debug`
+probe project the genex's condition never matches, so it resolves to an empty
+string, no `-Xclang --dependent-lib=` gets embedded in the probe's object
+file, and linking it fails with `lld-link: error: <root>: undefined symbol:
+mainCRTStartup` - CMake then reports "Check for working CXX compiler -
+broken" and aborts configure entirely, before this repo's own CMakeLists.txt
+code ever runs. `dev_ninja_clang`'s equivalent genex
+(`$<$<CONFIG:Debug>:MultiThreadedDebugDLL>`) never hit this: it only "works"
+because it happens to match the probe's hardcoded `Debug`, not because
+Debug configs are actually exempt from the underlying bug - confirmed by
+inspecting the preserved probe project (`cmake --debug-trycompile`) under
+`CMakeFiles/CMakeScratch/TryCompile-*`, whose generated `build.ninja`
+literally reads `# Configurations: Debug` no matter what the outer preset's
+`CMAKE_BUILD_TYPE` is. Every other preset
+either isn't Clang-on-Windows (no `CMAKE_MSVC_RUNTIME_LIBRARY` genex
+involved) or is already `Debug` (`dev_ninja_clang*`) - `release_ninja_clang`
+was the first Release-config Windows+Clang preset in this repo, which is why
+this had never surfaced before.
+
 ## Monitoring CI
 
 Same as `libgbemu` - `gh` is available and authenticated:
