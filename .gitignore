@@ -1,5 +1,6 @@
 builds/
 CMakeUserPresets.json
+.vs/
 .vscode/settings.json
 .vscode/launch.json
 .sonarlint/connectedMode.json
