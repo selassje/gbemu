@@ -142,6 +142,7 @@ setup_msvc_analysis(gbemu)
 setup_coverage_report_flags(gbemu)
 setup_sanitizers(gbemu)
 setup_std_lib(gbemu)
+setup_lto(gbemu)
 
 if(EMSCRIPTEN)
   # Must come after setup_compiler_warnings(): emscan-deps's own diagnostics
