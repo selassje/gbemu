@@ -51,6 +51,13 @@ private:
   // under clang-tidy's threshold - only ever called from there, as the
   // Game menu's Mode submenu.
   static void renderModeMenu(Impl& impl);
+  // Also split out of renderImGuiFrame(), same reason - draws Impl::error
+  // (when set and still within its display window) as red text in a black
+  // bar along the bottom of the window. Distinct from Impl::error itself:
+  // that keeps gating frameStep()'s runNextFrame() calls until something
+  // recovers it (see its own comment), while this only controls how long
+  // the bar stays visible.
+  static void renderErrorBar(Impl& impl);
 
   // Shared by the Game menu's Reset item and its native-only Ctrl+R
   // shortcut - the ImGui menu itself now renders on both platforms (see

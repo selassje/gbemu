@@ -40,6 +40,9 @@ constexpr int TARGET_FPS = 60;
 // A little breathing room below the menu bar (see Impl::menuBarHeight) so
 // the Game Boy screen isn't directly adjacent to it.
 constexpr float MENU_BAR_GAP = 0.0F;
+// How long renderErrorBar() keeps showing Impl::error along the bottom of
+// the window before it stops drawing it - see Impl::errorShownAtTicks.
+constexpr Uint64 ERROR_BAR_DURATION_MS = 10000;
 // The real Game Boy refresh rate - 4194304 Hz CPU clock / 70224 T-cycles per
 // frame - which is ~59.7275 Hz, not exactly 60. Both native and Emscripten
 // need to pace *emulation* (i.e. gbemu::GameBoy::runNextFrame() calls, and
@@ -397,7 +400,20 @@ struct App::Impl
   // saveStatePath()) - nothing else in Impl already tracks a loaded ROM's
   // path once loadRom() has consumed its buffer.
   std::optional<std::string> currentRomPath;
+  // Set by frameStep() when GameBoy::runNextFrame() fails (e.g. an
+  // unsupported/illegal opcode) - halts further runNextFrame() calls (see
+  // its own check in frameStep()) without tearing down the window, so the
+  // error can be shown instead of the app just vanishing. Cleared by
+  // whatever next puts the emulator back into a known-good state:
+  // resetGame(), a freshly loaded ROM, or a loaded save state - not by
+  // renderErrorBar() itself, which only stops *drawing* the bar once
+  // errorShownAtTicks + ERROR_BAR_DURATION_MS has passed.
   std::optional<std::string> error;
+  // SDL_GetTicks() timestamp of when Impl::error was last set -
+  // renderErrorBar() compares against this (not against Impl::error's mere
+  // presence) to decide whether the bottom error bar is still within its
+  // display window.
+  Uint64 errorShownAtTicks = 0;
   // Written from SDL's file-dialog callback (see showOpenRomDialog below),
   // which SDL may invoke from a thread other than this one - guarded so
   // frameStep() can safely pick it up once per frame instead of loading the
@@ -430,6 +446,10 @@ App::resetGame(Impl& impl)
   if (const auto result = impl.gameBoy->reset(); !result) {
     std::cerr << "Warning: failed to reset: " << result.error() << '\n';
   }
+  // A fresh reset puts the emulator back into a known-good state, so a
+  // previous runNextFrame() failure (see frameStep()) no longer applies -
+  // resume runNextFrame() calls and dismiss the error bar.
+  impl.error.reset();
 }
 
 void
@@ -558,6 +578,11 @@ App::readStateFromFile(Impl& impl, const std::filesystem::path& path)
   if (const auto result = impl.gameBoy->loadState(state); !result) {
     std::cerr << "Warning: failed to load " << path.string() << ": "
               << result.error() << '\n';
+  } else {
+    // A loaded state restores a known-good Cpu/Mmu/Ppu/Apu snapshot - see
+    // resetGame()'s own comment on why that clears a previous
+    // runNextFrame() failure.
+    impl.error.reset();
   }
 }
 
@@ -623,6 +648,33 @@ App::renderModeMenu(Impl& impl)
 }
 
 void
+App::renderErrorBar(Impl& impl)
+{
+  if (!impl.error) {
+    return;
+  }
+  if (SDL_GetTicks() - impl.errorShownAtTicks >= ERROR_BAR_DURATION_MS) {
+    return;
+  }
+
+  const ImGuiIO& io = ImGui::GetIO();
+  const float barHeight = ImGui::GetFrameHeight();
+  const ImVec2 barMin{ 0.0F, io.DisplaySize.y - barHeight };
+  const ImVec2 barMax{ io.DisplaySize.x, io.DisplaySize.y };
+
+  // Drawn directly via the foreground draw list, not a real ImGui::Begin()
+  // window - this is a passive status bar, not something that should
+  // capture mouse/keyboard focus or be movable/resizable.
+  ImDrawList* drawList = ImGui::GetForegroundDrawList();
+  drawList->AddRectFilled(barMin, barMax, IM_COL32(0, 0, 0, 255));
+  const ImVec2 textPos{
+    barMin.x + ImGui::GetStyle().FramePadding.x,
+    barMin.y + ((barHeight - ImGui::GetTextLineHeight()) * 0.5F),
+  };
+  drawList->AddText(textPos, IM_COL32(255, 0, 0, 255), impl.error->c_str());
+}
+
+void
 App::renderImGuiFrame(Impl& impl)
 {
   ImGui_ImplSDLRenderer3_NewFrame();
@@ -672,6 +724,8 @@ App::renderImGuiFrame(Impl& impl)
     ImGui::EndMainMenuBar();
   }
 
+  renderErrorBar(impl);
+
   ImGui::Render();
 }
 
@@ -697,6 +751,10 @@ App::loadPendingRom(Impl& impl)
     std::cerr << "Warning: failed to load ROM: " << loadResult.error() << '\n';
   } else {
     impl.currentRomPath = *romToLoad;
+    // GameBoy::loadRom() resets the emulator internally - see resetGame()'s
+    // own comment on why a reset also clears a previous runNextFrame()
+    // failure.
+    impl.error.reset();
   }
 }
 
@@ -890,12 +948,19 @@ App::frameStep(void* userData)
     // *presenting* the result - togglePause() separately mutes the audio
     // device outright, so this is belt-and-suspenders against ever
     // computing samples that would otherwise just be discarded.
-    if (!impl.paused) {
+    // A set Impl::error halts runNextFrame() the same way impl.paused does,
+    // until resetGame(), a freshly loaded ROM, or a loaded save state
+    // clears it (see Impl::error's own comment) - a runNextFrame() failure
+    // no longer tears the window down outright (impl.running stays true;
+    // only pollEvents()'s SDL_EVENT_QUIT does that), so this is what keeps
+    // it from being called again every frame on an emulator that's already
+    // known to be broken.
+    if (!impl.paused && !impl.error) {
       // NOLINTNEXTLINE(bugprone-unchecked-optional-access) - see above.
       const auto frame = impl.gameBoy->runNextFrame();
       if (!frame) {
         impl.error = frame.error();
-        impl.running = false;
+        impl.errorShownAtTicks = SDL_GetTicks();
       } else {
         SDL_UpdateTexture(impl.texture,
                           nullptr,
@@ -1123,10 +1188,11 @@ App::run(std::optional<std::string_view> romPath, gbemu::Mode mode)
   }
 #endif
 
-  if (m_impl->error) {
-    return std::unexpected(*m_impl->error);
-  }
-
+  // A runNextFrame() failure (Impl::error) is no longer treated as fatal to
+  // run() itself - see frameStep()'s own comment on why it now just halts
+  // emulation and shows the error bar instead of tearing the window down.
+  // The loop above only ends via a real window-close (SDL_EVENT_QUIT, see
+  // pollEvents()), which isn't a failure either.
   return {};
 }
 
