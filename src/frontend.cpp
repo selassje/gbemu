@@ -40,9 +40,6 @@ constexpr int TARGET_FPS = 60;
 // A little breathing room below the menu bar (see Impl::menuBarHeight) so
 // the Game Boy screen isn't directly adjacent to it.
 constexpr float MENU_BAR_GAP = 0.0F;
-// How long renderErrorBar() keeps showing Impl::error along the bottom of
-// the window before it stops drawing it - see Impl::errorShownAtTicks.
-constexpr Uint64 ERROR_BAR_DURATION_MS = 10000;
 // The real Game Boy refresh rate - 4194304 Hz CPU clock / 70224 T-cycles per
 // frame - which is ~59.7275 Hz, not exactly 60. Both native and Emscripten
 // need to pace *emulation* (i.e. gbemu::GameBoy::runNextFrame() calls, and
@@ -406,17 +403,28 @@ struct App::Impl
   // Set by frameStep() when GameBoy::runNextFrame() fails (e.g. an
   // unsupported/illegal opcode) - halts further runNextFrame() calls (see
   // its own check in frameStep()) without tearing down the window, so the
-  // error can be shown instead of the app just vanishing. Cleared by
+  // error can be shown (via renderErrorBar(), permanently - there's no
+  // auto-dismiss timer) instead of the app just vanishing. Cleared by
   // whatever next puts the emulator back into a known-good state:
-  // resetGame(), a freshly loaded ROM, or a loaded save state - not by
-  // renderErrorBar() itself, which only stops *drawing* the bar once
-  // errorShownAtTicks + ERROR_BAR_DURATION_MS has passed.
+  // resetGame(), a freshly loaded ROM, or a loaded save state.
   std::optional<std::string> error;
   // SDL_GetTicks() timestamp of when Impl::error was last set -
-  // renderErrorBar() compares against this (not against Impl::error's mere
-  // presence) to decide whether the bottom error bar is still within its
-  // display window.
+  // renderErrorBar() uses this only to break a tie against
+  // Impl::statusMessage below when both are set (show whichever is newer),
+  // not to decide whether Impl::error is still shown at all.
   Uint64 errorShownAtTicks = 0;
+  // Display-only counterpart to Impl::error above, shown in the same
+  // bottom bar (see renderErrorBar()) but never gates frameStep()'s
+  // runNextFrame() calls - set by readStateFromFile() on failure, which
+  // (unlike a runNextFrame() failure) leaves the emulator running exactly
+  // as it was before the attempted load, per GameBoy::loadState()'s own
+  // std::expected contract (see its own comment in gbemu.cpp), so there's
+  // nothing to halt. Cleared by a subsequent successful load, same as
+  // Impl::error above.
+  std::optional<std::string> statusMessage;
+  // SDL_GetTicks() timestamp of when Impl::statusMessage was last set -
+  // same tie-breaking role as errorShownAtTicks above.
+  Uint64 statusMessageShownAtTicks = 0;
   // Written from SDL's file-dialog callback (see showOpenRomDialog below),
   // which SDL may invoke from a thread other than this one - guarded so
   // frameStep() can safely pick it up once per frame instead of loading the
@@ -586,20 +594,29 @@ App::readStateFromFile(Impl& impl, const std::filesystem::path& path)
 {
   std::ifstream file{ path, std::ios::binary };
   if (!file) {
-    std::cerr << "Warning: no save state found at " << path.string() << '\n';
+    const auto message = "no save state found at " + path.string();
+    std::cerr << "Warning: " << message << '\n';
+    impl.statusMessage = message;
+    impl.statusMessageShownAtTicks = SDL_GetTicks();
     return;
   }
   const std::vector<std::uint8_t> state{ std::istreambuf_iterator<char>(file),
                                          std::istreambuf_iterator<char>() };
   // NOLINTNEXTLINE(bugprone-unchecked-optional-access) - see above.
   if (const auto result = impl.gameBoy->loadState(state); !result) {
-    std::cerr << "Warning: failed to load " << path.string() << ": "
-              << result.error() << '\n';
+    const auto message =
+      "failed to load " + path.string() + ": " + result.error();
+    std::cerr << "Warning: " << message << '\n';
+    impl.statusMessage = message;
+    impl.statusMessageShownAtTicks = SDL_GetTicks();
   } else {
     // A loaded state restores a known-good Cpu/Mmu/Ppu/Apu snapshot - see
     // resetGame()'s own comment on why that clears a previous
-    // runNextFrame() failure.
+    // runNextFrame() failure. Also dismiss a stale statusMessage from an
+    // earlier failed attempt, if any - it no longer reflects reality now
+    // that a load has actually succeeded.
     impl.error.reset();
+    impl.statusMessage.reset();
   }
 }
 
@@ -740,13 +757,6 @@ App::renderModeMenu(Impl& impl)
 void
 App::renderErrorBar(Impl& impl)
 {
-  if (!impl.error) {
-    return;
-  }
-  if (SDL_GetTicks() - impl.errorShownAtTicks >= ERROR_BAR_DURATION_MS) {
-    return;
-  }
-
   const ImGuiIO& io = ImGui::GetIO();
   const float barHeight = ImGui::GetFrameHeight();
   const ImVec2 barMin{ 0.0F, io.DisplaySize.y - barHeight };
@@ -754,14 +764,28 @@ App::renderErrorBar(Impl& impl)
 
   // Drawn directly via the foreground draw list, not a real ImGui::Begin()
   // window - this is a passive status bar, not something that should
-  // capture mouse/keyboard focus or be movable/resizable.
+  // capture mouse/keyboard focus or be movable/resizable. The bar itself
+  // is always drawn, empty when there's nothing to report - only the red
+  // message text is conditional below.
   ImDrawList* drawList = ImGui::GetForegroundDrawList();
   drawList->AddRectFilled(barMin, barMax, IM_COL32(0, 0, 0, 255));
+
+  if (!impl.error && !impl.statusMessage) {
+    return;
+  }
+  // If both are set, show whichever was set more recently - e.g. a failed
+  // Load State attempt right after an unrelated runNextFrame() failure
+  // should replace that older message rather than being hidden behind it.
+  const std::string& message =
+    (impl.statusMessage &&
+     (!impl.error || impl.statusMessageShownAtTicks > impl.errorShownAtTicks))
+      ? *impl.statusMessage
+      : *impl.error;
   const ImVec2 textPos{
     barMin.x + ImGui::GetStyle().FramePadding.x,
     barMin.y + ((barHeight - ImGui::GetTextLineHeight()) * 0.5F),
   };
-  drawList->AddText(textPos, IM_COL32(255, 0, 0, 255), impl.error->c_str());
+  drawList->AddText(textPos, IM_COL32(255, 0, 0, 255), message.c_str());
 }
 
 void
