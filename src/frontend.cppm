@@ -76,7 +76,7 @@ private:
   static void writeStateToFile(Impl& impl, const std::filesystem::path& path);
   static void readStateFromFile(Impl& impl, const std::filesystem::path& path);
 
-  // Native: the Game menu's Save State/Load State items and their
+  // Native: the File menu's Save State/Load State items and their
   // Ctrl+S/Ctrl+L shortcuts, deriving a single fixed <romPath>.state path
   // from Impl::currentRomPath - see their own __EMSCRIPTEN__ guard in
   // frontend.cpp.

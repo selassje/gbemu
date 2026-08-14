@@ -639,17 +639,6 @@ App::renderImGuiFrame(Impl& impl)
       if (ImGui::MenuItem("Open ROM...", "Ctrl+O")) {
         showOpenRomDialog(impl);
       }
-      ImGui::EndMenu();
-    }
-#endif
-    if (ImGui::BeginMenu("Game")) {
-      if (ImGui::MenuItem("Reset", "Ctrl+R")) {
-        resetGame(impl);
-      }
-      if (ImGui::MenuItem("Pause", "Ctrl+P", impl.paused)) {
-        togglePause(impl);
-      }
-#ifndef __EMSCRIPTEN__
       // Native only - see saveGameState()/loadGameState()'s own
       // __EMSCRIPTEN__ guard for why.
       ImGui::Separator();
@@ -661,7 +650,16 @@ App::renderImGuiFrame(Impl& impl)
             "Load State", "Ctrl+L", false, impl.currentRomPath.has_value())) {
         loadGameState(impl);
       }
+      ImGui::EndMenu();
+    }
 #endif
+    if (ImGui::BeginMenu("Game")) {
+      if (ImGui::MenuItem("Reset", "Ctrl+R")) {
+        resetGame(impl);
+      }
+      if (ImGui::MenuItem("Pause", "Ctrl+P", impl.paused)) {
+        togglePause(impl);
+      }
       renderModeMenu(impl);
       ImGui::EndMenu();
     }
