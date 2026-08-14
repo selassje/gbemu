@@ -84,11 +84,25 @@ private:
   static void readStateFromFile(Impl& impl, const std::filesystem::path& path);
 
   // Native: the File menu's Save State/Load State items and their
-  // Ctrl+S/Ctrl+L shortcuts, deriving a single fixed <romPath>.state path
-  // from Impl::currentRomPath - see their own __EMSCRIPTEN__ guard in
-  // frontend.cpp.
+  // Ctrl+S/Ctrl+L shortcuts - each opens a real save/open file dialog
+  // (seeded with a default <romPath>.state location derived from
+  // Impl::currentRomPath) rather than writing to a single fixed path
+  // outright - see their own __EMSCRIPTEN__ guard in frontend.cpp.
   static void saveGameState(Impl& impl);
   static void loadGameState(Impl& impl);
+  // Those dialogs' own SDL_DialogFileCallback - same cross-thread hand-off
+  // shape as onRomFileChosen() above, into Impl::pendingSaveStatePath/
+  // pendingLoadStatePath.
+  static void onSaveStateFileChosen(void* userdata,
+                                    const char* const* filelist,
+                                    int filter);
+  static void onLoadStateFileChosen(void* userdata,
+                                    const char* const* filelist,
+                                    int filter);
+  // frameStep()'s per-frame pickup of whatever the callbacks above hand
+  // off - same reason loadPendingRom() exists instead of doing the file
+  // I/O straight from the callback's (possibly non-main) thread.
+  static void applyPendingStateRequests(Impl& impl);
 
   // Emscripten's equivalent of showOpenRomDialog()/onRomFileChosen(): the
   // web page (see web/script.js) has no native file dialog to hook, so it

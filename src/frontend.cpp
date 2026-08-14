@@ -395,10 +395,13 @@ struct App::Impl
   bool audioEnabled = false;
   // The currently-loaded ROM's own file path, when loaded from a real file
   // (run()'s romPath parameter, or a file chosen via Open ROM) - unset while
-  // running the placeholder ROM (see makePlaceholderRom()). saveGameState()/
-  // loadGameState() derive their file's path from this (see
-  // saveStatePath()) - nothing else in Impl already tracks a loaded ROM's
-  // path once loadRom() has consumed its buffer.
+  // running the placeholder ROM (see makePlaceholderRom()). Also gates the
+  // File menu's Save State/Load State items (and their Ctrl+S/Ctrl+L
+  // shortcuts): saveGameState()/loadGameState() refuse to open a dialog at
+  // all with no ROM loaded, and otherwise use this to seed that dialog's
+  // default <romPath>.state location (see saveStatePath()) - nothing else
+  // in Impl already tracks a loaded ROM's path once loadRom() has consumed
+  // its buffer.
   std::optional<std::string> currentRomPath;
   // Set by frameStep() when GameBoy::runNextFrame() fails (e.g. an
   // unsupported/illegal opcode) - halts further runNextFrame() calls (see
@@ -420,6 +423,20 @@ struct App::Impl
   // ROM straight from that callback's thread.
   std::mutex pendingRomPathMutex;
   std::optional<std::string> pendingRomPath;
+#ifndef __EMSCRIPTEN__
+  // Written from the save/load-state file dialogs' own callbacks (see
+  // onSaveStateFileChosen()/onLoadStateFileChosen()) - same cross-thread
+  // hand-off reasoning as pendingRomPathMutex/pendingRomPath above. One
+  // mutex guarding both optionals rather than one each: SDL only ever has
+  // one file dialog open at a time, so they're never written concurrently
+  // in practice. Native only - Emscripten has no native file dialog to
+  // hook (see showOpenRomDialog()'s own comment for why), so its own
+  // save-state flow (checkEmscriptenSaveStateRequest()/
+  // checkEmscriptenLoadStateRequest()) never goes through this hand-off.
+  std::mutex pendingStatePathMutex;
+  std::optional<std::string> pendingSaveStatePath;
+  std::optional<std::string> pendingLoadStatePath;
+#endif
   // Set once during run()'s ImGui init, to how tall the main menu bar
   // actually rendered plus MENU_BAR_GAP, so the Game Boy screen can be
   // drawn just below it instead of the menu bar covering (or touching) its
@@ -589,13 +606,19 @@ App::readStateFromFile(Impl& impl, const std::filesystem::path& path)
 #ifndef __EMSCRIPTEN__
 namespace {
 
+constexpr std::array<SDL_DialogFileFilter, 1> STATE_FILE_FILTERS = { {
+  { .name = "Game Boy Save State", .pattern = "state" },
+} };
+
 // `<romPath with its own extension replaced>.state`, not appended after it -
 // so a state file doesn't stack a second extension onto the ROM's own name.
-// One fixed slot per ROM path, not multiple numbered slots - matching
-// GameBoy::saveState()/loadState()'s own single-snapshot shape. Native
-// only: Emscripten's own save states are named by the user through the web
+// Only ever used as the save/open dialogs' *default* location now (see
+// saveGameState()/loadGameState() below) - the user is free to pick a
+// different file/location in either dialog, unlike the single fixed slot
+// this used to be the actual (non-dialog-driven) path for. Native only:
+// Emscripten's own save states are named by the user through the web
 // page's sidebar instead (see checkEmscriptenSaveStateRequest() below),
-// which supports multiple named slots rather than this single fixed one.
+// which has no equivalent "default location" concept to seed.
 std::filesystem::path
 saveStatePath(const std::string& romPath)
 {
@@ -606,6 +629,38 @@ saveStatePath(const std::string& romPath)
 
 }
 
+void SDLCALL
+App::onSaveStateFileChosen(void* userdata,
+                           const char* const* filelist,
+                           int filter)
+{
+  static_cast<void>(filter); // Unused: only one filter is offered.
+  // NOLINTNEXTLINE(cppcoreguidelines-pro-bounds-pointer-arithmetic)
+  if (filelist == nullptr || filelist[0] == nullptr) {
+    return; // Error, or the user canceled the dialog - nothing to save.
+  }
+  auto& impl = *static_cast<Impl*>(userdata);
+  const std::scoped_lock lock{ impl.pendingStatePathMutex };
+  // NOLINTNEXTLINE(cppcoreguidelines-pro-bounds-pointer-arithmetic)
+  impl.pendingSaveStatePath = filelist[0];
+}
+
+void SDLCALL
+App::onLoadStateFileChosen(void* userdata,
+                           const char* const* filelist,
+                           int filter)
+{
+  static_cast<void>(filter); // Unused: only one filter is offered.
+  // NOLINTNEXTLINE(cppcoreguidelines-pro-bounds-pointer-arithmetic)
+  if (filelist == nullptr || filelist[0] == nullptr) {
+    return; // Error, or the user canceled the dialog - nothing to load.
+  }
+  auto& impl = *static_cast<Impl*>(userdata);
+  const std::scoped_lock lock{ impl.pendingStatePathMutex };
+  // NOLINTNEXTLINE(cppcoreguidelines-pro-bounds-pointer-arithmetic)
+  impl.pendingLoadStatePath = filelist[0];
+}
+
 void
 App::saveGameState(Impl& impl)
 {
@@ -613,7 +668,12 @@ App::saveGameState(Impl& impl)
     std::cerr << "Warning: no ROM loaded, nothing to save a state for\n";
     return;
   }
-  writeStateToFile(impl, saveStatePath(*impl.currentRomPath));
+  SDL_ShowSaveFileDialog(onSaveStateFileChosen,
+                         &impl,
+                         impl.window,
+                         STATE_FILE_FILTERS.data(),
+                         static_cast<int>(STATE_FILE_FILTERS.size()),
+                         saveStatePath(*impl.currentRomPath).string().c_str());
 }
 
 void
@@ -623,7 +683,37 @@ App::loadGameState(Impl& impl)
     std::cerr << "Warning: no ROM loaded, nothing to load a state into\n";
     return;
   }
-  readStateFromFile(impl, saveStatePath(*impl.currentRomPath));
+  SDL_ShowOpenFileDialog(onLoadStateFileChosen,
+                         &impl,
+                         impl.window,
+                         STATE_FILE_FILTERS.data(),
+                         static_cast<int>(STATE_FILE_FILTERS.size()),
+                         saveStatePath(*impl.currentRomPath).string().c_str(),
+                         false);
+}
+
+// frameStep()'s per-frame pickup of whatever onSaveStateFileChosen()/
+// onLoadStateFileChosen() handed off - same reason loadPendingRom() exists
+// instead of doing the actual file I/O straight from the dialog callback's
+// (possibly non-main) thread.
+void
+App::applyPendingStateRequests(Impl& impl)
+{
+  std::optional<std::string> saveTo;
+  std::optional<std::string> loadFrom;
+  {
+    const std::scoped_lock lock{ impl.pendingStatePathMutex };
+    saveTo = std::move(impl.pendingSaveStatePath);
+    impl.pendingSaveStatePath.reset();
+    loadFrom = std::move(impl.pendingLoadStatePath);
+    impl.pendingLoadStatePath.reset();
+  }
+  if (saveTo) {
+    writeStateToFile(impl, *saveTo);
+  }
+  if (loadFrom) {
+    readStateFromFile(impl, *loadFrom);
+  }
 }
 #endif
 
@@ -902,6 +992,9 @@ App::frameStep(void* userData)
   checkEmscriptenLoadStateRequest(impl);
 #endif
   loadPendingRom(impl);
+#ifndef __EMSCRIPTEN__
+  applyPendingStateRequests(impl);
+#endif
   pollEvents(impl);
 
 #ifndef __EMSCRIPTEN__
