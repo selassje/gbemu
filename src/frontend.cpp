@@ -29,7 +29,7 @@ constexpr int WINDOW_WIDTH =
   static_cast<int>(gbemu::SCREEN_WIDTH) * WINDOW_SCALE;
 constexpr int WINDOW_HEIGHT =
   static_cast<int>(gbemu::SCREEN_HEIGHT) * WINDOW_SCALE;
-constexpr const char* WINDOW_TITLE = "Gbemu";
+constexpr const char* WINDOW_TITLE = "GbEmu";
 #ifdef __EMSCRIPTEN__
 // Only used as the (browser-driven) fps hint for emscripten_set_main_loop_arg
 // in run() - an upper bound on how often the browser invokes frameStep, not
