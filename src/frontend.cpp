@@ -392,13 +392,13 @@ struct App::Impl
   bool audioEnabled = false;
   // The currently-loaded ROM's own file path, when loaded from a real file
   // (run()'s romPath parameter, or a file chosen via Open ROM) - unset while
-  // running the placeholder ROM (see makePlaceholderRom()). Also gates the
-  // File menu's Save State/Load State items (and their Ctrl+S/Ctrl+L
-  // shortcuts): saveGameState()/loadGameState() refuse to open a dialog at
-  // all with no ROM loaded, and otherwise use this to seed that dialog's
-  // default <romPath>.state location (see saveStatePath()) - nothing else
-  // in Impl already tracks a loaded ROM's path once loadRom() has consumed
-  // its buffer.
+  // running the placeholder ROM (see makePlaceholderRom()). Save State/Load
+  // State are available either way (GameBoy::saveState()/loadState() don't
+  // care what's loaded) - saveGameState()/loadGameState() only use this,
+  // when set, to seed their dialog's default <romPath>.gbemu location (see
+  // saveStatePath()); with no ROM loaded, the dialog just falls back to
+  // its own default. Nothing else in Impl already tracks a loaded ROM's
+  // path once loadRom() has consumed its buffer.
   std::optional<std::string> currentRomPath;
   // Set by frameStep() when GameBoy::runNextFrame() fails (e.g. an
   // unsupported/illegal opcode) - halts further runNextFrame() calls (see
@@ -624,10 +624,10 @@ App::readStateFromFile(Impl& impl, const std::filesystem::path& path)
 namespace {
 
 constexpr std::array<SDL_DialogFileFilter, 1> STATE_FILE_FILTERS = { {
-  { .name = "Game Boy Save State", .pattern = "state" },
+  { .name = "GbEmu", .pattern = "gbemu" },
 } };
 
-// `<romPath with its own extension replaced>.state`, not appended after it -
+// `<romPath with its own extension replaced>.gbemu`, not appended after it -
 // so a state file doesn't stack a second extension onto the ROM's own name.
 // Only ever used as the save/open dialogs' *default* location now (see
 // saveGameState()/loadGameState() below) - the user is free to pick a
@@ -640,8 +640,26 @@ std::filesystem::path
 saveStatePath(const std::string& romPath)
 {
   auto path = std::filesystem::path(romPath);
-  path.replace_extension(".state");
+  path.replace_extension(".gbemu");
   return path;
+}
+
+// SDL's own SDL_ShowSaveFileDialog doesn't enforce the active filter's
+// extension on whatever name the user actually types (verified against its
+// Windows IFileDialog backend - it never calls SetDefaultExtension, and no
+// other backend does either) - a bare "save1" round-trips as literally
+// "save1", no ".gbemu" attached. Without this, such a file would silently
+// fail to reappear in the Load State dialog afterward, since that dialog's
+// own filter only matches "*.gbemu" (see STATE_FILE_FILTERS above).
+// Unconditional replace_extension(), same as saveStatePath() above: a
+// mistakenly-typed different extension (e.g. "notes.txt") is overwritten
+// rather than stacked into "notes.txt.gbemu".
+std::filesystem::path
+ensureGbemuExtension(const std::string& path)
+{
+  auto fsPath = std::filesystem::path(path);
+  fsPath.replace_extension(".gbemu");
+  return fsPath;
 }
 
 }
@@ -659,7 +677,7 @@ App::onSaveStateFileChosen(void* userdata,
   auto& impl = *static_cast<Impl*>(userdata);
   const std::scoped_lock lock{ impl.pendingStatePathMutex };
   // NOLINTNEXTLINE(cppcoreguidelines-pro-bounds-pointer-arithmetic)
-  impl.pendingSaveStatePath = filelist[0];
+  impl.pendingSaveStatePath = ensureGbemuExtension(filelist[0]).string();
 }
 
 void SDLCALL
@@ -681,31 +699,37 @@ App::onLoadStateFileChosen(void* userdata,
 void
 App::saveGameState(Impl& impl)
 {
-  if (!impl.currentRomPath) {
-    std::cerr << "Warning: no ROM loaded, nothing to save a state for\n";
-    return;
-  }
+  // Only set when a real ROM is loaded (see Impl::currentRomPath's own
+  // comment) - with no ROM loaded (the placeholder ROM, see
+  // makePlaceholderRom()), fall back to nullptr and let the dialog pick
+  // its own default location. A named local, not a temporary passed
+  // inline, so its .c_str() stays valid for the dialog call below.
+  const auto defaultLocation = impl.currentRomPath
+                                 ? saveStatePath(*impl.currentRomPath).string()
+                                 : std::string{};
   SDL_ShowSaveFileDialog(onSaveStateFileChosen,
                          &impl,
                          impl.window,
                          STATE_FILE_FILTERS.data(),
                          static_cast<int>(STATE_FILE_FILTERS.size()),
-                         saveStatePath(*impl.currentRomPath).string().c_str());
+                         impl.currentRomPath ? defaultLocation.c_str()
+                                             : nullptr);
 }
 
 void
 App::loadGameState(Impl& impl)
 {
-  if (!impl.currentRomPath) {
-    std::cerr << "Warning: no ROM loaded, nothing to load a state into\n";
-    return;
-  }
+  // See saveGameState()'s own comment.
+  const auto defaultLocation = impl.currentRomPath
+                                 ? saveStatePath(*impl.currentRomPath).string()
+                                 : std::string{};
   SDL_ShowOpenFileDialog(onLoadStateFileChosen,
                          &impl,
                          impl.window,
                          STATE_FILE_FILTERS.data(),
                          static_cast<int>(STATE_FILE_FILTERS.size()),
-                         saveStatePath(*impl.currentRomPath).string().c_str(),
+                         impl.currentRomPath ? defaultLocation.c_str()
+                                             : nullptr,
                          false);
 }
 
@@ -808,12 +832,10 @@ App::renderImGuiFrame(Impl& impl)
       // Native only - see saveGameState()/loadGameState()'s own
       // __EMSCRIPTEN__ guard for why.
       ImGui::Separator();
-      if (ImGui::MenuItem(
-            "Save State", "Ctrl+S", false, impl.currentRomPath.has_value())) {
+      if (ImGui::MenuItem("Save State", "Ctrl+S")) {
         saveGameState(impl);
       }
-      if (ImGui::MenuItem(
-            "Load State", "Ctrl+L", false, impl.currentRomPath.has_value())) {
+      if (ImGui::MenuItem("Load State", "Ctrl+L")) {
         loadGameState(impl);
       }
       ImGui::EndMenu();

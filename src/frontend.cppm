@@ -84,10 +84,12 @@ private:
   static void readStateFromFile(Impl& impl, const std::filesystem::path& path);
 
   // Native: the File menu's Save State/Load State items and their
-  // Ctrl+S/Ctrl+L shortcuts - each opens a real save/open file dialog
-  // (seeded with a default <romPath>.state location derived from
-  // Impl::currentRomPath) rather than writing to a single fixed path
-  // outright - see their own __EMSCRIPTEN__ guard in frontend.cpp.
+  // Ctrl+S/Ctrl+L shortcuts - available even on the placeholder ROM (see
+  // makePlaceholderRom()), not just a real one. Each opens a real
+  // save/open file dialog (seeded with a default <romPath>.gbemu location
+  // derived from Impl::currentRomPath when set) rather than writing to a
+  // single fixed path outright - see their own __EMSCRIPTEN__ guard in
+  // frontend.cpp.
   static void saveGameState(Impl& impl);
   static void loadGameState(Impl& impl);
   // Those dialogs' own SDL_DialogFileCallback - same cross-thread hand-off

@@ -48,13 +48,13 @@ function upload_save_file_btn_click() {
 }
 
 function isSaveFile(filename) {
-    return /\.state$/i.test(filename);
+    return /\.gbemu$/i.test(filename);
 }
 
 function upload_save_file() {
     const file = this.files[0];
     if (!isSaveFile(file.name)) {
-        alert("Only .state save files are supported.");
+        alert("Only .gbemu save files are supported.");
         return;
     }
     var reader = new FileReader();
@@ -78,7 +78,7 @@ function new_save_state() {
     if (!name) {
         return;
     }
-    saveState(isSaveFile(name) ? name : name + ".state");
+    saveState(isSaveFile(name) ? name : name + ".gbemu");
 }
 
 function saveState(filename) {
