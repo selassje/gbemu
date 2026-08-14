@@ -466,11 +466,10 @@ App::resetGame(Impl& impl)
   // run() always emplace()s gameBoy before either of this function's
   // callers (the Game menu's Reset item, on both platforms, or native's
   // Ctrl+R shortcut) can reach this - see the other NOLINTNEXTLINEs of this
-  // kind elsewhere in this file.
+  // kind elsewhere in this file. GameBoy::reset() itself can no longer
+  // fail (see its own comment), so there's no result to check here anymore.
   // NOLINTNEXTLINE(bugprone-unchecked-optional-access)
-  if (const auto result = impl.gameBoy->reset(); !result) {
-    std::cerr << "Warning: failed to reset: " << result.error() << '\n';
-  }
+  impl.gameBoy->reset();
   // A fresh reset puts the emulator back into a known-good state, so a
   // previous runNextFrame() failure (see frameStep()) no longer applies -
   // resume runNextFrame() calls and dismiss the error bar.
