@@ -58,6 +58,9 @@ private:
   // by whatever resolves it, see their own comments) is shown as red text
   // inside it.
   static void renderErrorBar(Impl& impl);
+  // Also split out of renderImGuiFrame(), same reason - draws the Audio
+  // menu's Enabled toggle and volume slider.
+  static void renderAudioMenu(Impl& impl);
 
   // Shared by the Game menu's Reset item and its native-only Ctrl+R
   // shortcut - the ImGui menu itself now renders on both platforms (see

@@ -785,6 +785,27 @@ App::renderModeMenu(Impl& impl)
 }
 
 void
+App::renderAudioMenu(Impl& impl)
+{
+  if (!ImGui::BeginMenu("Audio")) {
+    return;
+  }
+  if (ImGui::MenuItem("Enabled", "Ctrl+A", impl.audioEnabled)) {
+    toggleAudioEnabled(impl);
+  }
+  // Narrowed from the menu's full auto-width so the slider doesn't stretch
+  // across the whole dropdown.
+  ImGui::SetNextItemWidth(150.0F);
+  int volumePercent = static_cast<int>(std::lround(impl.audioVolume * 100.0F));
+  if (ImGui::SliderInt("Volume", &volumePercent, 0, 100, "%d%%") &&
+      impl.audioStream != nullptr) {
+    impl.audioVolume = static_cast<float>(volumePercent) / 100.0F;
+    SDL_SetAudioStreamGain(impl.audioStream, impl.audioVolume);
+  }
+  ImGui::EndMenu();
+}
+
+void
 App::renderErrorBar(Impl& impl)
 {
   const ImGuiIO& io = ImGui::GetIO();
@@ -857,22 +878,7 @@ App::renderImGuiFrame(Impl& impl)
       renderModeMenu(impl);
       ImGui::EndMenu();
     }
-    if (ImGui::BeginMenu("Audio")) {
-      if (ImGui::MenuItem("Enabled", "Ctrl+A", impl.audioEnabled)) {
-        toggleAudioEnabled(impl);
-      }
-      // Narrowed from the menu's full auto-width so the slider doesn't
-      // stretch across the whole dropdown.
-      ImGui::SetNextItemWidth(150.0F);
-      int volumePercent =
-        static_cast<int>(impl.audioVolume * 100.0F + 0.5F);
-      if (ImGui::SliderInt("Volume", &volumePercent, 0, 100, "%d%%") &&
-          impl.audioStream != nullptr) {
-        impl.audioVolume = static_cast<float>(volumePercent) / 100.0F;
-        SDL_SetAudioStreamGain(impl.audioStream, impl.audioVolume);
-      }
-      ImGui::EndMenu();
-    }
+    renderAudioMenu(impl);
     ImGui::EndMainMenuBar();
   }
 
