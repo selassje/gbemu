@@ -390,6 +390,13 @@ struct App::Impl
   // paused rather than resuming it, so a session is silent until the user
   // opts in.
   bool audioEnabled = false;
+  // Multiplies the audio stream's loudness (see SDL_SetAudioStreamGain,
+  // applied directly wherever the Audio menu's Volume slider changes this) -
+  // independent of audioEnabled/paused above (see syncAudioDeviceState),
+  // since it only affects how loud already-playing audio is, not whether the
+  // device is playing at all. 1.0F matches SDL_AudioStream's own default
+  // gain, so leaving this untouched is a no-op.
+  float audioVolume = 1.0F;
   // The currently-loaded ROM's own file path, when loaded from a real file
   // (run()'s romPath parameter, or a file chosen via Open ROM) - unset while
   // running the placeholder ROM (see makePlaceholderRom()). Save State/Load
@@ -853,6 +860,16 @@ App::renderImGuiFrame(Impl& impl)
     if (ImGui::BeginMenu("Audio")) {
       if (ImGui::MenuItem("Enabled", "Ctrl+A", impl.audioEnabled)) {
         toggleAudioEnabled(impl);
+      }
+      // Narrowed from the menu's full auto-width so the slider doesn't
+      // stretch across the whole dropdown.
+      ImGui::SetNextItemWidth(150.0F);
+      int volumePercent =
+        static_cast<int>(impl.audioVolume * 100.0F + 0.5F);
+      if (ImGui::SliderInt("Volume", &volumePercent, 0, 100, "%d%%") &&
+          impl.audioStream != nullptr) {
+        impl.audioVolume = static_cast<float>(volumePercent) / 100.0F;
+        SDL_SetAudioStreamGain(impl.audioStream, impl.audioVolume);
       }
       ImGui::EndMenu();
     }
