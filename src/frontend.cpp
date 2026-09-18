@@ -17,12 +17,21 @@ namespace frontend {
 
 namespace {
 
-constexpr int WINDOW_SCALE = 3;
-constexpr int WINDOW_WIDTH =
-  static_cast<int>(gbemu::SCREEN_WIDTH) * WINDOW_SCALE;
-constexpr int WINDOW_HEIGHT =
-  static_cast<int>(gbemu::SCREEN_HEIGHT) * WINDOW_SCALE;
+constexpr int DEFAULT_VIDEO_SCALE = 3;
+constexpr std::array<int, 3> VIDEO_SCALE_OPTIONS = { 3, 4, 5 };
 constexpr const char* WINDOW_TITLE = "GbEmu";
+
+int
+windowWidthFor(int scale)
+{
+  return static_cast<int>(gbemu::SCREEN_WIDTH) * scale;
+}
+
+int
+windowHeightFor(int scale)
+{
+  return static_cast<int>(gbemu::SCREEN_HEIGHT) * scale;
+}
 #ifdef __EMSCRIPTEN__
 constexpr int TARGET_FPS = 60;
 #endif
@@ -33,6 +42,21 @@ constexpr double TARGET_FRAME_MS = 1000.0 / GB_REFRESH_RATE_HZ;
 constexpr int AUDIO_MAX_QUEUED_BYTES =
   static_cast<int>(gbemu::SAMPLE_RATE * 2 * sizeof(float) / 10);
 #endif
+
+bool
+isVideoShortcutScancode(SDL_Scancode scancode)
+{
+  switch (scancode) {
+    case SDL_SCANCODE_F9:
+    case SDL_SCANCODE_F10:
+    case SDL_SCANCODE_F11:
+    case SDL_SCANCODE_F12:
+    case SDL_SCANCODE_ESCAPE:
+      return true;
+    default:
+      return false;
+  }
+}
 
 std::optional<gbemu::Button>
 mapKey(SDL_Scancode scancode)
@@ -306,6 +330,8 @@ struct App::Impl
   bool paused = false;
   bool audioEnabled = false;
   float audioVolume = 1.0F;
+  int videoScale = DEFAULT_VIDEO_SCALE;
+  bool fullscreen = false;
   std::optional<std::string> currentRomPath;
   std::optional<std::string> error;
   Uint64 errorShownAtTicks = 0;
@@ -367,6 +393,62 @@ App::toggleAudioEnabled(Impl& impl)
 {
   impl.audioEnabled = !impl.audioEnabled;
   syncAudioDeviceState(impl);
+}
+
+void
+App::applyWindowSize(Impl& impl)
+{
+  SDL_SetWindowSize(impl.window,
+                    windowWidthFor(impl.videoScale),
+                    windowHeightFor(impl.videoScale) +
+                      static_cast<int>(std::ceil(impl.menuBarHeight)));
+}
+
+void
+App::setVideoScale(Impl& impl, int scale)
+{
+  impl.videoScale = scale;
+  if (impl.fullscreen) {
+    SDL_SetWindowFullscreen(impl.window, false);
+    impl.fullscreen = false;
+  }
+  applyWindowSize(impl);
+}
+
+void
+App::toggleFullscreen(Impl& impl)
+{
+  impl.fullscreen = !impl.fullscreen;
+  SDL_SetWindowFullscreen(impl.window, impl.fullscreen);
+  if (!impl.fullscreen) {
+    applyWindowSize(impl);
+  }
+}
+
+void
+App::handleVideoShortcut(Impl& impl, int scancode)
+{
+  switch (static_cast<SDL_Scancode>(scancode)) {
+    case SDL_SCANCODE_F9:
+      setVideoScale(impl, VIDEO_SCALE_OPTIONS.at(0));
+      break;
+    case SDL_SCANCODE_F10:
+      setVideoScale(impl, VIDEO_SCALE_OPTIONS.at(1));
+      break;
+    case SDL_SCANCODE_F11:
+      setVideoScale(impl, VIDEO_SCALE_OPTIONS.at(2));
+      break;
+    case SDL_SCANCODE_F12:
+      toggleFullscreen(impl);
+      break;
+    case SDL_SCANCODE_ESCAPE:
+      if (impl.fullscreen) {
+        toggleFullscreen(impl);
+      }
+      break;
+    default:
+      break;
+  }
 }
 
 #ifndef __EMSCRIPTEN__
@@ -599,6 +681,33 @@ App::renderAudioMenu(Impl& impl)
 }
 
 void
+App::renderVideoMenu(Impl& impl)
+{
+  if (!ImGui::BeginMenu("Video")) {
+    return;
+  }
+  if (ImGui::BeginMenu("Size")) {
+    static constexpr std::array<const char*, 3> scaleShortcuts = { "F9",
+                                                                   "F10",
+                                                                   "F11" };
+    for (std::size_t i = 0; i < VIDEO_SCALE_OPTIONS.size(); ++i) {
+      const int scale = VIDEO_SCALE_OPTIONS.at(i);
+      const std::string label = std::to_string(scale * 100) + "%";
+      if (ImGui::MenuItem(label.c_str(),
+                          scaleShortcuts.at(i),
+                          !impl.fullscreen && impl.videoScale == scale)) {
+        setVideoScale(impl, scale);
+      }
+    }
+    if (ImGui::MenuItem("Fullscreen", "F12", impl.fullscreen)) {
+      toggleFullscreen(impl);
+    }
+    ImGui::EndMenu();
+  }
+  ImGui::EndMenu();
+}
+
+void
 App::renderErrorBar(Impl& impl)
 {
   const ImGuiIO& io = ImGui::GetIO();
@@ -625,43 +734,52 @@ App::renderErrorBar(Impl& impl)
 }
 
 void
+App::renderMenuBar(Impl& impl)
+{
+  if (!ImGui::BeginMainMenuBar()) {
+    return;
+  }
+#ifndef __EMSCRIPTEN__
+  if (ImGui::BeginMenu("File")) {
+    if (ImGui::MenuItem("Open ROM...", "Ctrl+O")) {
+      showOpenRomDialog(impl);
+    }
+    ImGui::Separator();
+    if (ImGui::MenuItem("Save State", "Ctrl+S")) {
+      saveGameState(impl);
+    }
+    if (ImGui::MenuItem("Load State", "Ctrl+L")) {
+      loadGameState(impl);
+    }
+    ImGui::EndMenu();
+  }
+#endif
+  if (ImGui::BeginMenu("Game")) {
+    if (ImGui::MenuItem("Reset", "Ctrl+R")) {
+      resetGame(impl);
+    }
+    if (ImGui::MenuItem("Pause", "Ctrl+P", impl.paused)) {
+      togglePause(impl);
+    }
+    renderModeMenu(impl);
+    ImGui::EndMenu();
+  }
+  renderAudioMenu(impl);
+  renderVideoMenu(impl);
+  ImGui::EndMainMenuBar();
+}
+
+void
 App::renderImGuiFrame(Impl& impl)
 {
   ImGui_ImplSDLRenderer3_NewFrame();
   ImGui_ImplSDL3_NewFrame();
   ImGui::NewFrame();
 
-  if (ImGui::BeginMainMenuBar()) {
-#ifndef __EMSCRIPTEN__
-    if (ImGui::BeginMenu("File")) {
-      if (ImGui::MenuItem("Open ROM...", "Ctrl+O")) {
-        showOpenRomDialog(impl);
-      }
-      ImGui::Separator();
-      if (ImGui::MenuItem("Save State", "Ctrl+S")) {
-        saveGameState(impl);
-      }
-      if (ImGui::MenuItem("Load State", "Ctrl+L")) {
-        loadGameState(impl);
-      }
-      ImGui::EndMenu();
-    }
-#endif
-    if (ImGui::BeginMenu("Game")) {
-      if (ImGui::MenuItem("Reset", "Ctrl+R")) {
-        resetGame(impl);
-      }
-      if (ImGui::MenuItem("Pause", "Ctrl+P", impl.paused)) {
-        togglePause(impl);
-      }
-      renderModeMenu(impl);
-      ImGui::EndMenu();
-    }
-    renderAudioMenu(impl);
-    ImGui::EndMainMenuBar();
+  if (!impl.fullscreen) {
+    renderMenuBar(impl);
+    renderErrorBar(impl);
   }
-
-  renderErrorBar(impl);
 
   ImGui::Render();
 }
@@ -788,6 +906,9 @@ App::pollEvents(Impl& impl)
                event.key.scancode == SDL_SCANCODE_A &&
                (event.key.mod & SDL_KMOD_CTRL) != 0) {
       toggleAudioEnabled(impl);
+    } else if (event.type == SDL_EVENT_KEY_DOWN && !event.key.repeat &&
+               isVideoShortcutScancode(event.key.scancode)) {
+      handleVideoShortcut(impl, static_cast<int>(event.key.scancode));
     } else if (event.type == SDL_EVENT_KEY_DOWN ||
                event.type == SDL_EVENT_KEY_UP) {
       if (event.key.repeat) {
@@ -865,12 +986,33 @@ App::frameStep(void* userData)
     }
 
     SDL_RenderClear(impl.renderer);
-    const SDL_FRect destRect = {
-      .x = 0.0F,
-      .y = impl.menuBarHeight,
-      .w = static_cast<float>(WINDOW_WIDTH),
-      .h = static_cast<float>(WINDOW_HEIGHT),
-    };
+    int outputWidth = 0;
+    int outputHeight = 0;
+    SDL_GetCurrentRenderOutputSize(impl.renderer, &outputWidth, &outputHeight);
+    SDL_FRect destRect;
+    if (impl.fullscreen) {
+      destRect = SDL_FRect{
+        .x = 0.0F,
+        .y = 0.0F,
+        .w = static_cast<float>(outputWidth),
+        .h = static_cast<float>(outputHeight),
+      };
+    } else {
+      const float availableHeight =
+        static_cast<float>(outputHeight) - impl.menuBarHeight;
+      const float scale =
+        std::min(static_cast<float>(outputWidth) /
+                   static_cast<float>(gbemu::SCREEN_WIDTH),
+                 availableHeight / static_cast<float>(gbemu::SCREEN_HEIGHT));
+      const float destWidth = static_cast<float>(gbemu::SCREEN_WIDTH) * scale;
+      const float destHeight = static_cast<float>(gbemu::SCREEN_HEIGHT) * scale;
+      destRect = SDL_FRect{
+        .x = (static_cast<float>(outputWidth) - destWidth) * 0.5F,
+        .y = impl.menuBarHeight + ((availableHeight - destHeight) * 0.5F),
+        .w = destWidth,
+        .h = destHeight,
+      };
+    }
     SDL_RenderTexture(impl.renderer, impl.texture, nullptr, &destRect);
     ImGui_ImplSDLRenderer3_RenderDrawData(ImGui::GetDrawData(), impl.renderer);
     SDL_RenderPresent(impl.renderer);
@@ -935,8 +1077,10 @@ App::run(std::optional<std::string_view> romPath, gbemu::Mode mode)
     return std::unexpected(std::string("SDL_Init failed: ") + SDL_GetError());
   }
 
-  m_impl->window =
-    SDL_CreateWindow(WINDOW_TITLE, WINDOW_WIDTH, WINDOW_HEIGHT, 0);
+  m_impl->window = SDL_CreateWindow(WINDOW_TITLE,
+                                    windowWidthFor(m_impl->videoScale),
+                                    windowHeightFor(m_impl->videoScale),
+                                    0);
   if (m_impl->window == nullptr) {
     return std::unexpected(std::string("SDL_CreateWindow failed: ") +
                            SDL_GetError());
@@ -991,10 +1135,7 @@ App::run(std::optional<std::string_view> romPath, gbemu::Mode mode)
   ImGui::NewFrame();
   ImGui::EndFrame();
   m_impl->menuBarHeight = ImGui::GetFrameHeight() + MENU_BAR_GAP;
-  SDL_SetWindowSize(m_impl->window,
-                    WINDOW_WIDTH,
-                    WINDOW_HEIGHT +
-                      static_cast<int>(std::ceil(m_impl->menuBarHeight)));
+  applyWindowSize(*m_impl);
 
   const SDL_AudioSpec audioSpec = {
     .format = SDL_AUDIO_F32,

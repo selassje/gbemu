@@ -34,15 +34,21 @@ private:
   static void loadPendingRom(Impl& impl);
   static void pollEvents(Impl& impl);
   static void renderImGuiFrame(Impl& impl);
+  static void renderMenuBar(Impl& impl);
   static void renderModeMenu(Impl& impl);
   static void renderErrorBar(Impl& impl);
   static void renderAudioMenu(Impl& impl);
+  static void renderVideoMenu(Impl& impl);
 
   static void resetGame(Impl& impl);
   static void togglePause(Impl& impl);
   static void setMode(Impl& impl, gbemu::Mode mode);
   static void toggleAudioEnabled(Impl& impl);
   static void syncAudioDeviceState(Impl& impl);
+  static void applyWindowSize(Impl& impl);
+  static void setVideoScale(Impl& impl, int scale);
+  static void toggleFullscreen(Impl& impl);
+  static void handleVideoShortcut(Impl& impl, int scancode);
 
   static void writeStateToFile(Impl& impl, const std::filesystem::path& path);
   static void readStateFromFile(Impl& impl, const std::filesystem::path& path);
