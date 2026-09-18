@@ -1,12 +1,5 @@
 module;
 
-// C headers belong in the global module fragment (before `module frontend;`
-// below), not after it - two separate #includes of overlapping system
-// headers both attributed to "module frontend" (rather than one of them
-// living in the unattached global module) is what caused a real
-// "declaration ... in the global module follows declaration in module
-// frontend" conflict between SDL3's and emscripten's headers when this was
-// tried the other way round.
 #include <SDL3/SDL.h>
 
 #ifdef __EMSCRIPTEN__
@@ -31,53 +24,16 @@ constexpr int WINDOW_HEIGHT =
   static_cast<int>(gbemu::SCREEN_HEIGHT) * WINDOW_SCALE;
 constexpr const char* WINDOW_TITLE = "GbEmu";
 #ifdef __EMSCRIPTEN__
-// Only used as the (browser-driven) fps hint for emscripten_set_main_loop_arg
-// in run() - an upper bound on how often the browser invokes frameStep, not
-// the actual emulation rate (see Impl::framesEmulated in frameStep() for
-// why those two are kept separate).
 constexpr int TARGET_FPS = 60;
 #endif
-// A little breathing room below the menu bar (see Impl::menuBarHeight) so
-// the Game Boy screen isn't directly adjacent to it.
 constexpr float MENU_BAR_GAP = 0.0F;
-// The real Game Boy refresh rate - 4194304 Hz CPU clock / 70224 T-cycles per
-// frame - which is ~59.7275 Hz, not exactly 60. Both native and Emscripten
-// need to pace *emulation* (i.e. gbemu::GameBoy::runNextFrame() calls, and
-// the fixed-size audio chunk each one produces - see gbemu::Apu::SAMPLE_RATE)
-// against this real rate rather than a flat 60 Hz: running frames faster
-// than real GB time produces audio faster than real time too, which lets the
-// audio stream's queue slowly build up a backlog and drift further behind
-// video the longer a session runs. Native enforces this directly (see the
-// SDL_Delay loop in run()); Emscripten can't block its callback the same way
-// (see frameStep()'s own use of this), so it uses this same constant to
-// decide when a callback is *due* to actually emulate a frame instead.
 constexpr double GB_REFRESH_RATE_HZ = 4194304.0 / 70224.0;
 constexpr double TARGET_FRAME_MS = 1000.0 / GB_REFRESH_RATE_HZ;
 #ifndef __EMSCRIPTEN__
-// Upper bound on how much unplayed audio is allowed to sit in the SDL audio
-// stream's internal queue before it gets dropped and resynced (see
-// frameStep()) - native frame pacing (TARGET_FRAME_MS above) and the audio
-// device's own playback clock are two independent clocks with no hard sync
-// between them, so even a small mismatch would otherwise let queued audio
-// grow without bound and drift further behind video the longer a session
-// runs. ~100ms: generous enough to absorb ordinary frame-to-frame jitter
-// without audible dropouts, small enough that a listener won't notice the
-// lag building up to this point before it gets cut.
-//
-// Native-only: Emscripten's own main-loop pacing (emscripten_set_main_loop_arg,
-// browser-driven) and its SDL3 audio backend's buffering characteristics are
-// different enough from native's that this same threshold isn't safe to
-// reuse there untested - tried once, and it made wasm audio drop most of its
-// queued backlog on nearly every frame instead of only during genuine drift,
-// which sounded like audio playing sped-up/skipping rather than delayed.
-// Revisit with a wasm-appropriate threshold (verified in an actual browser,
-// not reasoned about the same way native's was) rather than reusing this one.
 constexpr int AUDIO_MAX_QUEUED_BYTES =
   static_cast<int>(gbemu::SAMPLE_RATE * 2 * sizeof(float) / 10);
 #endif
 
-// Fixed physical-key layout (scancode-based, so it stays put regardless of
-// keyboard locale/layout) - not user-configurable yet.
 std::optional<gbemu::Button>
 mapKey(SDL_Scancode scancode)
 {
@@ -115,46 +71,19 @@ readRomFile(std::string_view romPath)
                                     std::istreambuf_iterator<char>() };
 }
 
-// Stands in for a real cartridge when run() is given no ROM path, so the
-// window/menu bar still comes up and File > Open ROM can be used to load one.
-// gbemu::Mmu::loadRom only rejects buffers smaller than 0x150 bytes and reads
-// the cartridge-type byte at 0x147 (0 here: no MBC) - nothing else in the
-// header (Nintendo logo, checksum, ROM-size byte) is checked. Sized to
-// 0x4000 (one full ROM bank), not just the 0x150 minimum, so every address
-// in 0x0000-0x7FFF resolves without an out-of-range bank access.
-//
-// CGB flag 0x0143 is deliberately set to CGB-supported (0x80), not left at
-// the DMG default: whichever boot ROM runs always draws its own hardcoded
-// logo/trademark tiles before handing off, regardless of cartridge content
-// (see boot_rom.cpp) - not "fixed" here by embedding Nintendo's actual
-// copyrighted logo bitmap into 0x104-0x133 just to complete the picture. The
-// DMG boot ROM leaves its trademark tile sitting in the tilemap forever once
-// it hands off (nothing clears it - confirmed by disassembly); the CGB boot
-// ROM's own final steps clear the whole screen before disabling itself
-// (confirmed empirically: 300 frames past boot, with nothing but an infinite
-// self-jump at $0150, renders a single uniform white pixel buffer). Using
-// the CGB boot path here avoids needing to hand-roll that same cleanup
-// ourselves. This only affects the placeholder cartridge - GameBoy::loadRom
-// recomputes hardware mode fresh from each ROM's own header, so a real DMG
-// or CGB ROM opened afterward via File > Open ROM is unaffected by this.
 constexpr std::size_t PLACEHOLDER_ROM_SIZE = 0x4000;
 constexpr std::array<std::uint8_t, PLACEHOLDER_ROM_SIZE>
 makePlaceholderRom()
 {
   std::array<std::uint8_t, PLACEHOLDER_ROM_SIZE> rom{};
-  rom.at(0x100) = 0xC3; // JP $0100 - infinite no-op loop, run once booted
+  rom.at(0x100) = 0xC3;
   rom.at(0x101) = 0x00;
   rom.at(0x102) = 0x01;
-  rom.at(0x143) = 0x80; // CGB flag: CGB-supported (see comment above)
+  rom.at(0x143) = 0x80;
   return rom;
 }
 constexpr auto PLACEHOLDER_ROM = makePlaceholderRom();
 
-// Original 32x32 pixel-art window icon (RGBA8888, row-major) - a generic
-// handheld game console silhouette (rounded body, screen, d-pad, two round
-// buttons), deliberately not modeled on any specific real device's exact
-// proportions, colors, or branding, so there's no third-party license or
-// trademark concern to track.
 // clang-format off
 constexpr int APP_ICON_SIZE = 32;
 constexpr std::array<std::uint8_t, static_cast<std::size_t>(APP_ICON_SIZE) *
@@ -370,98 +299,27 @@ struct App::Impl
   SDL_Window* window = nullptr;
   SDL_Renderer* renderer = nullptr;
   SDL_Texture* texture = nullptr;
-  // Bound directly to a playback device (see SDL_OpenAudioDeviceStream in
-  // run()) - pushing data via SDL_PutAudioStreamData is all that's needed
-  // per frame, SDL pulls from it into the device on its own.
   SDL_AudioStream* audioStream = nullptr;
   bool imguiInitialized = false;
-  // Deferred (not default-constructed here) since GameBoy's console Mode
-  // is fixed at construction time and isn't known until run() receives
-  // it from the caller.
   std::optional<gbemu::GameBoy> gameBoy;
   bool running = true;
-  // Toggled by togglePause() - the Game menu's Pause item on both platforms,
-  // or native's Ctrl+P shortcut. frameStep() skips runNextFrame() while set,
-  // but still presents every callback, so the menu bar stays interactive
-  // instead of the window appearing frozen.
   bool paused = false;
-  // Toggled by toggleAudioEnabled() - the Audio menu's Enabled item on both
-  // platforms, or Ctrl+A. Off by default: run() leaves the audio device
-  // paused rather than resuming it, so a session is silent until the user
-  // opts in.
   bool audioEnabled = false;
-  // Multiplies the audio stream's loudness (see SDL_SetAudioStreamGain,
-  // applied directly wherever the Audio menu's Volume slider changes this) -
-  // independent of audioEnabled/paused above (see syncAudioDeviceState),
-  // since it only affects how loud already-playing audio is, not whether the
-  // device is playing at all. 1.0F matches SDL_AudioStream's own default
-  // gain, so leaving this untouched is a no-op.
   float audioVolume = 1.0F;
-  // The currently-loaded ROM's own file path, when loaded from a real file
-  // (run()'s romPath parameter, or a file chosen via Open ROM) - unset while
-  // running the placeholder ROM (see makePlaceholderRom()). Save State/Load
-  // State are available either way (GameBoy::saveState()/loadState() don't
-  // care what's loaded) - saveGameState()/loadGameState() only use this,
-  // when set, to seed their dialog's default <romPath>.gbemu location (see
-  // saveStatePath()); with no ROM loaded, the dialog just falls back to
-  // its own default. Nothing else in Impl already tracks a loaded ROM's
-  // path once loadRom() has consumed its buffer.
   std::optional<std::string> currentRomPath;
-  // Set by frameStep() when GameBoy::runNextFrame() fails (e.g. an
-  // unsupported/illegal opcode) - halts further runNextFrame() calls (see
-  // its own check in frameStep()) without tearing down the window, so the
-  // error can be shown (via renderErrorBar(), permanently - there's no
-  // auto-dismiss timer) instead of the app just vanishing. Cleared by
-  // whatever next puts the emulator back into a known-good state:
-  // resetGame(), a freshly loaded ROM, or a loaded save state.
   std::optional<std::string> error;
-  // SDL_GetTicks() timestamp of when Impl::error was last set -
-  // renderErrorBar() uses this only to break a tie against
-  // Impl::statusMessage below when both are set (show whichever is newer),
-  // not to decide whether Impl::error is still shown at all.
   Uint64 errorShownAtTicks = 0;
-  // Display-only counterpart to Impl::error above, shown in the same
-  // bottom bar (see renderErrorBar()) but never gates frameStep()'s
-  // runNextFrame() calls - set by readStateFromFile() on failure, which
-  // (unlike a runNextFrame() failure) leaves the emulator running exactly
-  // as it was before the attempted load, per GameBoy::loadState()'s own
-  // std::expected contract (see its own comment in gbemu.cpp), so there's
-  // nothing to halt. Cleared by a subsequent successful load, same as
-  // Impl::error above.
   std::optional<std::string> statusMessage;
-  // SDL_GetTicks() timestamp of when Impl::statusMessage was last set -
-  // same tie-breaking role as errorShownAtTicks above.
   Uint64 statusMessageShownAtTicks = 0;
-  // Written from SDL's file-dialog callback (see showOpenRomDialog below),
-  // which SDL may invoke from a thread other than this one - guarded so
-  // frameStep() can safely pick it up once per frame instead of loading the
-  // ROM straight from that callback's thread.
   std::mutex pendingRomPathMutex;
   std::optional<std::string> pendingRomPath;
 #ifndef __EMSCRIPTEN__
-  // Written from the save/load-state file dialogs' own callbacks (see
-  // onSaveStateFileChosen()/onLoadStateFileChosen()) - same cross-thread
-  // hand-off reasoning as pendingRomPathMutex/pendingRomPath above. One
-  // mutex guarding both optionals rather than one each: SDL only ever has
-  // one file dialog open at a time, so they're never written concurrently
-  // in practice. Native only - Emscripten has no native file dialog to
-  // hook (see showOpenRomDialog()'s own comment for why), so its own
-  // save-state flow (checkEmscriptenSaveStateRequest()/
-  // checkEmscriptenLoadStateRequest()) never goes through this hand-off.
   std::mutex pendingStatePathMutex;
   std::optional<std::string> pendingSaveStatePath;
   std::optional<std::string> pendingLoadStatePath;
 #endif
-  // Set once during run()'s ImGui init, to how tall the main menu bar
-  // actually rendered plus MENU_BAR_GAP, so the Game Boy screen can be
-  // drawn just below it instead of the menu bar covering (or touching) its
-  // top rows.
   float menuBarHeight = 0.0F;
 #ifdef __EMSCRIPTEN__
-  // Wall-clock accumulator driving frameStep()'s emulation gate - see its
-  // own comment. emulationStartTicks is set from the first frameStep() call
-  // (framesEmulated == 0), not from run(), so the pacing baseline is the
-  // first real callback rather than however long SDL/ImGui setup took.
   Uint64 emulationStartTicks = 0;
   std::uint64_t framesEmulated = 0;
 #endif
@@ -470,16 +328,8 @@ struct App::Impl
 void
 App::resetGame(Impl& impl)
 {
-  // run() always emplace()s gameBoy before either of this function's
-  // callers (the Game menu's Reset item, on both platforms, or native's
-  // Ctrl+R shortcut) can reach this - see the other NOLINTNEXTLINEs of this
-  // kind elsewhere in this file. GameBoy::reset() itself can no longer
-  // fail (see its own comment), so there's no result to check here anymore.
   // NOLINTNEXTLINE(bugprone-unchecked-optional-access)
   impl.gameBoy->reset();
-  // A fresh reset puts the emulator back into a known-good state, so a
-  // previous runNextFrame() failure (see frameStep()) no longer applies -
-  // resume runNextFrame() calls and dismiss the error bar.
   impl.error.reset();
 }
 
@@ -498,11 +348,6 @@ App::syncAudioDeviceState(Impl& impl)
   if (impl.audioStream == nullptr) {
     return;
   }
-  // Mutes/resumes immediately instead of leaving already-queued samples to
-  // drain out on their own - see run()'s SDL_OpenAudioDeviceStream call for
-  // why a stream needs an explicit resume/pause at all. Playing requires
-  // both: enabled by the user (Impl::audioEnabled) and not paused
-  // (Impl::paused) - either one alone should mute.
   if (impl.audioEnabled && !impl.paused) {
     SDL_ResumeAudioStreamDevice(impl.audioStream);
   } else {
@@ -536,10 +381,10 @@ constexpr std::array<SDL_DialogFileFilter, 1> ROM_FILE_FILTERS = { {
 void SDLCALL
 App::onRomFileChosen(void* userdata, const char* const* filelist, int filter)
 {
-  static_cast<void>(filter); // Unused: only one filter is offered.
+  static_cast<void>(filter);
   // NOLINTNEXTLINE(cppcoreguidelines-pro-bounds-pointer-arithmetic)
   if (filelist == nullptr || filelist[0] == nullptr) {
-    return; // Error, or the user canceled the dialog - nothing to load.
+    return;
   }
   auto& impl = *static_cast<Impl*>(userdata);
   const std::scoped_lock lock{ impl.pendingRomPathMutex };
@@ -560,22 +405,9 @@ App::showOpenRomDialog(Impl& impl)
 }
 #endif
 
-// The actual GameBoy::saveState()/loadState() <-> file byte I/O - shared by
-// both platforms' own save-state entry points (native's saveGameState()/
-// loadGameState() below, and Emscripten's checkEmscriptenSaveStateRequest()/
-// checkEmscriptenLoadStateRequest() further down), which differ only in how
-// each arrives at the path to use. Not itself __EMSCRIPTEN__-guarded:
-// std::ofstream/ifstream work the same against Emscripten's virtual
-// filesystem as they do against a real one (see checkEmscriptenLoadRequest()'s
-// own use of plain std::ifstream for the same reason) - only *persisting*
-// that filesystem across a page reload needs the browser-side IDBFS mount
-// this function itself doesn't need to know about.
 void
 App::writeStateToFile(Impl& impl, const std::filesystem::path& path)
 {
-  // frameStep() only ever runs as run()'s main-loop callback, and run()
-  // always emplace()s gameBoy before entering that loop - see resetGame()'s
-  // own comment.
   // NOLINTNEXTLINE(bugprone-unchecked-optional-access)
   const auto state = impl.gameBoy->saveState();
   std::ofstream file{ path, std::ios::binary };
@@ -584,9 +416,6 @@ App::writeStateToFile(Impl& impl, const std::filesystem::path& path)
               << " for writing\n";
     return;
   }
-  // std::ostream::write() requires const char* - no portable
-  // reinterpret_cast-free way to write a raw std::uint8_t buffer to a
-  // binary stream.
   // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast)
   file.write(reinterpret_cast<const char*>(state.data()),
              static_cast<std::streamsize>(state.size()));
@@ -616,11 +445,6 @@ App::readStateFromFile(Impl& impl, const std::filesystem::path& path)
     impl.statusMessage = message;
     impl.statusMessageShownAtTicks = SDL_GetTicks();
   } else {
-    // A loaded state restores a known-good Cpu/Mmu/Ppu/Apu snapshot - see
-    // resetGame()'s own comment on why that clears a previous
-    // runNextFrame() failure. Also dismiss a stale statusMessage from an
-    // earlier failed attempt, if any - it no longer reflects reality now
-    // that a load has actually succeeded.
     impl.error.reset();
     impl.statusMessage.reset();
   }
@@ -633,15 +457,6 @@ constexpr std::array<SDL_DialogFileFilter, 1> STATE_FILE_FILTERS = { {
   { .name = "GbEmu", .pattern = "gbemu" },
 } };
 
-// `<romPath with its own extension replaced>.gbemu`, not appended after it -
-// so a state file doesn't stack a second extension onto the ROM's own name.
-// Only ever used as the save/open dialogs' *default* location now (see
-// saveGameState()/loadGameState() below) - the user is free to pick a
-// different file/location in either dialog, unlike the single fixed slot
-// this used to be the actual (non-dialog-driven) path for. Native only:
-// Emscripten's own save states are named by the user through the web
-// page's sidebar instead (see checkEmscriptenSaveStateRequest() below),
-// which has no equivalent "default location" concept to seed.
 std::filesystem::path
 saveStatePath(const std::string& romPath)
 {
@@ -650,16 +465,6 @@ saveStatePath(const std::string& romPath)
   return path;
 }
 
-// SDL's own SDL_ShowSaveFileDialog doesn't enforce the active filter's
-// extension on whatever name the user actually types (verified against its
-// Windows IFileDialog backend - it never calls SetDefaultExtension, and no
-// other backend does either) - a bare "save1" round-trips as literally
-// "save1", no ".gbemu" attached. Without this, such a file would silently
-// fail to reappear in the Load State dialog afterward, since that dialog's
-// own filter only matches "*.gbemu" (see STATE_FILE_FILTERS above).
-// Unconditional replace_extension(), same as saveStatePath() above: a
-// mistakenly-typed different extension (e.g. "notes.txt") is overwritten
-// rather than stacked into "notes.txt.gbemu".
 std::filesystem::path
 ensureGbemuExtension(const std::string& path)
 {
@@ -675,10 +480,10 @@ App::onSaveStateFileChosen(void* userdata,
                            const char* const* filelist,
                            int filter)
 {
-  static_cast<void>(filter); // Unused: only one filter is offered.
+  static_cast<void>(filter);
   // NOLINTNEXTLINE(cppcoreguidelines-pro-bounds-pointer-arithmetic)
   if (filelist == nullptr || filelist[0] == nullptr) {
-    return; // Error, or the user canceled the dialog - nothing to save.
+    return;
   }
   auto& impl = *static_cast<Impl*>(userdata);
   const std::scoped_lock lock{ impl.pendingStatePathMutex };
@@ -691,10 +496,10 @@ App::onLoadStateFileChosen(void* userdata,
                            const char* const* filelist,
                            int filter)
 {
-  static_cast<void>(filter); // Unused: only one filter is offered.
+  static_cast<void>(filter);
   // NOLINTNEXTLINE(cppcoreguidelines-pro-bounds-pointer-arithmetic)
   if (filelist == nullptr || filelist[0] == nullptr) {
-    return; // Error, or the user canceled the dialog - nothing to load.
+    return;
   }
   auto& impl = *static_cast<Impl*>(userdata);
   const std::scoped_lock lock{ impl.pendingStatePathMutex };
@@ -705,11 +510,6 @@ App::onLoadStateFileChosen(void* userdata,
 void
 App::saveGameState(Impl& impl)
 {
-  // Only set when a real ROM is loaded (see Impl::currentRomPath's own
-  // comment) - with no ROM loaded (the placeholder ROM, see
-  // makePlaceholderRom()), fall back to nullptr and let the dialog pick
-  // its own default location. A named local, not a temporary passed
-  // inline, so its .c_str() stays valid for the dialog call below.
   const auto defaultLocation = impl.currentRomPath
                                  ? saveStatePath(*impl.currentRomPath).string()
                                  : std::string{};
@@ -725,7 +525,6 @@ App::saveGameState(Impl& impl)
 void
 App::loadGameState(Impl& impl)
 {
-  // See saveGameState()'s own comment.
   const auto defaultLocation = impl.currentRomPath
                                  ? saveStatePath(*impl.currentRomPath).string()
                                  : std::string{};
@@ -739,10 +538,6 @@ App::loadGameState(Impl& impl)
                          false);
 }
 
-// frameStep()'s per-frame pickup of whatever onSaveStateFileChosen()/
-// onLoadStateFileChosen() handed off - same reason loadPendingRom() exists
-// instead of doing the actual file I/O straight from the dialog callback's
-// (possibly non-main) thread.
 void
 App::applyPendingStateRequests(Impl& impl)
 {
@@ -793,8 +588,6 @@ App::renderAudioMenu(Impl& impl)
   if (ImGui::MenuItem("Enabled", "Ctrl+A", impl.audioEnabled)) {
     toggleAudioEnabled(impl);
   }
-  // Narrowed from the menu's full auto-width so the slider doesn't stretch
-  // across the whole dropdown.
   ImGui::SetNextItemWidth(150.0F);
   int volumePercent = static_cast<int>(std::lround(impl.audioVolume * 100.0F));
   if (ImGui::SliderInt("Volume", &volumePercent, 0, 100, "%d%%") &&
@@ -813,20 +606,12 @@ App::renderErrorBar(Impl& impl)
   const ImVec2 barMin{ 0.0F, io.DisplaySize.y - barHeight };
   const ImVec2 barMax{ io.DisplaySize.x, io.DisplaySize.y };
 
-  // Drawn directly via the foreground draw list, not a real ImGui::Begin()
-  // window - this is a passive status bar, not something that should
-  // capture mouse/keyboard focus or be movable/resizable. The bar itself
-  // is always drawn, empty when there's nothing to report - only the red
-  // message text is conditional below.
   ImDrawList* drawList = ImGui::GetForegroundDrawList();
   drawList->AddRectFilled(barMin, barMax, IM_COL32(0, 0, 0, 255));
 
   if (!impl.error && !impl.statusMessage) {
     return;
   }
-  // If both are set, show whichever was set more recently - e.g. a failed
-  // Load State attempt right after an unrelated runNextFrame() failure
-  // should replace that older message rather than being hidden behind it.
   const std::string& message =
     (impl.statusMessage &&
      (!impl.error || impl.statusMessageShownAtTicks > impl.errorShownAtTicks))
@@ -848,16 +633,10 @@ App::renderImGuiFrame(Impl& impl)
 
   if (ImGui::BeginMainMenuBar()) {
 #ifndef __EMSCRIPTEN__
-    // No native file dialog to hook on Emscripten - see
-    // showOpenRomDialog()/onRomFileChosen()'s own __EMSCRIPTEN__ guard above;
-    // the web page's sidebar upload button covers this instead (see
-    // web/script.js).
     if (ImGui::BeginMenu("File")) {
       if (ImGui::MenuItem("Open ROM...", "Ctrl+O")) {
         showOpenRomDialog(impl);
       }
-      // Native only - see saveGameState()/loadGameState()'s own
-      // __EMSCRIPTEN__ guard for why.
       ImGui::Separator();
       if (ImGui::MenuItem("Save State", "Ctrl+S")) {
         saveGameState(impl);
@@ -902,16 +681,11 @@ App::loadPendingRom(Impl& impl)
   const auto rom = readRomFile(*romToLoad);
   if (!rom) {
     std::cerr << "Warning: " << rom.error() << '\n';
-    // frameStep() only ever runs as run()'s main-loop callback, and
-    // run() always emplace()s gameBoy before entering that loop.
     // NOLINTNEXTLINE(bugprone-unchecked-optional-access)
   } else if (const auto loadResult = impl.gameBoy->loadRom(*rom); !loadResult) {
     std::cerr << "Warning: failed to load ROM: " << loadResult.error() << '\n';
   } else {
     impl.currentRomPath = *romToLoad;
-    // GameBoy::loadRom() resets the emulator internally - see resetGame()'s
-    // own comment on why a reset also clears a previous runNextFrame()
-    // failure.
     impl.error.reset();
   }
 }
@@ -919,10 +693,6 @@ App::loadPendingRom(Impl& impl)
 #ifdef __EMSCRIPTEN__
 namespace {
 
-// Reads and deletes a one-shot request marker file, if present, returning
-// the (non-empty) filename it named - shared by checkEmscriptenLoadRequest()
-// and its save-state equivalents below, which otherwise differ only in
-// which path they poll and what they do with the filename it names.
 std::optional<std::string>
 readAndClearRequestFile(const char* requestPath)
 {
@@ -944,11 +714,6 @@ readAndClearRequestFile(const char* requestPath)
 void
 App::checkEmscriptenLoadRequest(Impl& impl)
 {
-  // web/script.js's loadRom(filename) writes the chosen filename here as a
-  // one-shot trigger, after the ROM itself has already been written into
-  // /gbemu_roms/<filename> by its upload handler - mirrors the native Open
-  // ROM dialog's callback, just driven by the page instead of SDL. See
-  // script.js's own comment on why this isn't just "/roms".
   const auto filename = readAndClearRequestFile("/gbemu_roms/.load_request");
   if (!filename) {
     return;
@@ -957,12 +722,6 @@ App::checkEmscriptenLoadRequest(Impl& impl)
   impl.pendingRomPath = "/gbemu_roms/" + *filename;
 }
 
-// web/script.js's saveState(filename)/loadState(filename) write the chosen
-// filename here as a one-shot trigger - mirror checkEmscriptenLoadRequest()
-// above, just against /gbemu_saves and driving writeStateToFile()/
-// readStateFromFile() directly instead of the pendingRomPath hand-off
-// (there's no cross-thread callback involved here the way SDL's file dialog
-// needs one for, so nothing else needs to happen on the next frameStep()).
 void
 App::checkEmscriptenSaveStateRequest(Impl& impl)
 {
@@ -993,9 +752,6 @@ App::checkEmscriptenLoadStateRequest(Impl& impl)
 
 #endif
 
-// Split out of frameStep() purely to keep its cognitive complexity under
-// clang-tidy's threshold - see loadPendingRom()/renderImGuiFrame()'s own
-// comment for this same reason.
 void
 App::pollEvents(Impl& impl)
 {
@@ -1039,9 +795,6 @@ App::pollEvents(Impl& impl)
       }
       const auto button = mapKey(event.key.scancode);
       if (button) {
-        // frameStep() only ever runs as run()'s main-loop callback, and
-        // run() always emplace()s gameBoy before entering that loop - see
-        // its own comment.
         // NOLINTNEXTLINE(bugprone-unchecked-optional-access)
         impl.gameBoy->setButtonState(*button, event.type == SDL_EVENT_KEY_DOWN);
       }
@@ -1068,20 +821,6 @@ App::frameStep(void* userData)
 #ifndef __EMSCRIPTEN__
   constexpr bool shouldEmulateFrame = true;
 #else
-  // The browser invokes this callback at its own pace (TARGET_FPS is only an
-  // upper-bound hint - see its own comment), which doesn't line up with the
-  // real GB refresh rate (GB_REFRESH_RATE_HZ, ~59.7275 Hz vs. a typical 60 Hz
-  // display). Emulating (and pushing a GB frame's worth of audio) on every
-  // single callback would therefore produce audio slightly faster than real
-  // time, and - with nothing bounding the resulting backlog on this platform
-  // (see AUDIO_MAX_QUEUED_BYTES's own comment on why that fix isn't reused
-  // here) - it would drift further behind video the longer a session runs.
-  // Instead of emulating unconditionally, only do so once real elapsed time
-  // (tracked independently of the callback rate, so this self-corrects
-  // rather than accumulating the same kind of drift it's meant to prevent)
-  // justifies another GB frame; other callbacks just redraw nothing new,
-  // leaving the previous frame on screen a beat longer, which isn't
-  // noticeable at these rates.
   if (impl.framesEmulated == 0) {
     impl.emulationStartTicks = SDL_GetTicks();
   }
@@ -1096,26 +835,8 @@ App::frameStep(void* userData)
 #ifdef __EMSCRIPTEN__
     ++impl.framesEmulated;
 #endif
-    // NewFrame()/Render() must stay paired within whichever callback
-    // actually presents (see the render/present block below, unconditional
-    // on native but gated the same as this whole block on Emscripten) -
-    // calling this outside shouldEmulateFrame would leave a NewFrame()
-    // dangling without a matching Render() on callbacks Emscripten skips
-    // presenting.
     renderImGuiFrame(impl);
 
-    // While paused, skip advancing the emulator (and pushing audio for a
-    // frame that was never emulated) entirely rather than merely not
-    // *presenting* the result - togglePause() separately mutes the audio
-    // device outright, so this is belt-and-suspenders against ever
-    // computing samples that would otherwise just be discarded.
-    // A set Impl::error halts runNextFrame() the same way impl.paused does,
-    // until resetGame(), a freshly loaded ROM, or a loaded save state
-    // clears it (see Impl::error's own comment) - a runNextFrame() failure
-    // no longer tears the window down outright (impl.running stays true;
-    // only pollEvents()'s SDL_EVENT_QUIT does that), so this is what keeps
-    // it from being called again every frame on an emulator that's already
-    // known to be broken.
     if (!impl.paused && !impl.error) {
       // NOLINTNEXTLINE(bugprone-unchecked-optional-access) - see above.
       const auto frame = impl.gameBoy->runNextFrame();
@@ -1129,10 +850,6 @@ App::frameStep(void* userData)
                           static_cast<int>(gbemu::SCREEN_WIDTH * 3));
         if (impl.audioStream != nullptr && impl.audioEnabled) {
 #ifndef __EMSCRIPTEN__
-          // Bound the stream's internal backlog before adding this frame's
-          // samples to it - see AUDIO_MAX_QUEUED_BYTES's own comment for why
-          // this can otherwise grow without limit, and for why this is
-          // native-only.
           if (SDL_GetAudioStreamQueued(impl.audioStream) >
               AUDIO_MAX_QUEUED_BYTES) {
             SDL_ClearAudioStream(impl.audioStream);
@@ -1147,15 +864,7 @@ App::frameStep(void* userData)
       }
     }
 
-    // Presented every callback regardless of Impl::paused - a streaming
-    // texture keeps its last uploaded pixels until the next
-    // SDL_UpdateTexture, so re-presenting it while paused just keeps
-    // showing the same frame instead of the window (and the menu bar
-    // that's drawn into the same draw data) going dark or unresponsive.
     SDL_RenderClear(impl.renderer);
-    // Drawn below the menu bar (impl.menuBarHeight - see its own comment),
-    // not stretched to fill the whole window, so the menu bar never covers
-    // the Game Boy screen's top rows.
     const SDL_FRect destRect = {
       .x = 0.0F,
       .y = impl.menuBarHeight,
@@ -1187,9 +896,6 @@ App::~App()
     ImGui::DestroyContext();
   }
   if (m_impl->audioStream != nullptr) {
-    // Also closes the device it was opened alongside (see
-    // SDL_OpenAudioDeviceStream in run()) - no separate SDL_CloseAudioDevice
-    // call needed.
     SDL_DestroyAudioStream(m_impl->audioStream);
   }
   if (m_impl->texture != nullptr) {
@@ -1236,9 +942,6 @@ App::run(std::optional<std::string_view> romPath, gbemu::Mode mode)
                            SDL_GetError());
   }
 
-  // SDL_SetWindowIcon copies the pixel data into the platform's own icon
-  // representation synchronously, so the surface can be destroyed
-  // immediately after - it doesn't need to outlive this call.
   SDL_Surface* iconSurface = SDL_CreateSurfaceFrom(
     APP_ICON_SIZE,
     APP_ICON_SIZE,
@@ -1266,15 +969,10 @@ App::run(std::optional<std::string_view> romPath, gbemu::Mode mode)
     return std::unexpected(std::string("SDL_CreateTexture failed: ") +
                            SDL_GetError());
   }
-  // Nearest-neighbor, not the default linear filter - the window scales the
-  // native 160x144 framebuffer up 3x, and linear filtering blurs the pixel
-  // art instead of keeping crisp per-pixel edges.
   SDL_SetTextureScaleMode(m_impl->texture, SDL_SCALEMODE_NEAREST);
 
   IMGUI_CHECKVERSION();
   ImGui::CreateContext();
-  // No imgui.ini for a single always-present menu bar - there's no window
-  // layout worth persisting between runs.
   ImGui::GetIO().IniFilename = nullptr;
   if (!ImGui_ImplSDL3_InitForSDLRenderer(m_impl->window, m_impl->renderer)) {
     ImGui::DestroyContext();
@@ -1288,29 +986,16 @@ App::run(std::optional<std::string_view> romPath, gbemu::Mode mode)
   }
   m_impl->imguiInitialized = true;
 
-  // A throwaway frame, rendering nothing: ImGui only loads its default font
-  // (and so only reports real metrics from GetFrameHeight()) once a frame
-  // has actually started, so this runs before the window is sized - sizing
-  // it any earlier would see FontSize still at 0 and undersize the window,
-  // leaving the real menu bar covering the Game Boy screen's top rows after
-  // all.
   ImGui_ImplSDLRenderer3_NewFrame();
   ImGui_ImplSDL3_NewFrame();
   ImGui::NewFrame();
   ImGui::EndFrame();
   m_impl->menuBarHeight = ImGui::GetFrameHeight() + MENU_BAR_GAP;
-  // On Emscripten this resizes the <canvas> element itself (SDL3's
-  // Emscripten backend ties window size to it) - see styles.css's own
-  // comment on why nothing else may touch the canvas's CSS box, or this
-  // resize's own effect gets mismeasured and undone.
   SDL_SetWindowSize(m_impl->window,
                     WINDOW_WIDTH,
                     WINDOW_HEIGHT +
                       static_cast<int>(std::ceil(m_impl->menuBarHeight)));
 
-  // Matches EmulationFrame::audio's own layout exactly (see gbemu.cppm) -
-  // interleaved float stereo at gbemu::SAMPLE_RATE - so each frame's
-  // samples can be pushed to the stream as-is, no conversion needed.
   const SDL_AudioSpec audioSpec = {
     .format = SDL_AUDIO_F32,
     .channels = 2,
@@ -1319,23 +1004,12 @@ App::run(std::optional<std::string_view> romPath, gbemu::Mode mode)
   m_impl->audioStream = SDL_OpenAudioDeviceStream(
     SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &audioSpec, nullptr, nullptr);
   if (m_impl->audioStream == nullptr) {
-    // Not fatal: a missing/misconfigured audio device shouldn't prevent
-    // the emulator from running at all - fall back to silent operation
-    // (frameStep() skips SDL_PutAudioStreamData() when this is null).
     std::cerr << "Warning: SDL_OpenAudioDeviceStream failed, running "
                  "without audio: "
               << SDL_GetError() << '\n';
   }
-  // Streams bound to a device via SDL_OpenAudioDeviceStream start paused,
-  // which already matches Impl::audioEnabled's off-by-default state - this
-  // call just expresses that default in one place (syncAudioDeviceState)
-  // rather than relying on it implicitly.
   syncAudioDeviceState(*m_impl);
 
-  // Emscripten: the browser owns the main loop (blocking here would freeze
-  // the tab, since it never yields back to the JS event loop) and paces it
-  // to TARGET_FPS itself. Native: no such constraint, so a plain blocking
-  // loop with an explicit per-frame delay achieves the same target rate.
 #ifdef __EMSCRIPTEN__
   emscripten_set_main_loop_arg(&App::frameStep, m_impl.get(), TARGET_FPS, 1);
 #else
@@ -1349,11 +1023,6 @@ App::run(std::optional<std::string_view> romPath, gbemu::Mode mode)
   }
 #endif
 
-  // A runNextFrame() failure (Impl::error) is no longer treated as fatal to
-  // run() itself - see frameStep()'s own comment on why it now just halts
-  // emulation and shows the error bar instead of tearing the window down.
-  // The loop above only ends via a real window-close (SDL_EVENT_QUIT, see
-  // pollEvents()), which isn't a failure either.
   return {};
 }
 
