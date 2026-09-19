@@ -37,7 +37,8 @@ constexpr int TARGET_FPS = 60;
 #endif
 constexpr float MENU_BAR_GAP = 0.0F;
 constexpr double GB_REFRESH_RATE_HZ = 4194304.0 / 70224.0;
-constexpr double TARGET_FRAME_MS = 1000.0 / GB_REFRESH_RATE_HZ;
+constexpr double SPEED_STEP_FPS = 5.0;
+constexpr double MIN_TARGET_FPS = 5.0;
 #ifndef __EMSCRIPTEN__
 constexpr int AUDIO_MAX_QUEUED_BYTES =
   static_cast<int>(gbemu::SAMPLE_RATE * 2 * sizeof(float) / 10);
@@ -332,6 +333,7 @@ struct App::Impl
   float audioVolume = 1.0F;
   int videoScale = DEFAULT_VIDEO_SCALE;
   bool fullscreen = false;
+  double targetFps = GB_REFRESH_RATE_HZ;
   std::optional<std::string> currentRomPath;
   std::optional<std::string> error;
   Uint64 errorShownAtTicks = 0;
@@ -393,6 +395,24 @@ App::toggleAudioEnabled(Impl& impl)
 {
   impl.audioEnabled = !impl.audioEnabled;
   syncAudioDeviceState(impl);
+}
+
+void
+App::setSpeedFps(Impl& impl, double fps)
+{
+  impl.targetFps = std::max(MIN_TARGET_FPS, fps);
+}
+
+void
+App::increaseSpeed(Impl& impl)
+{
+  setSpeedFps(impl, impl.targetFps + SPEED_STEP_FPS);
+}
+
+void
+App::decreaseSpeed(Impl& impl)
+{
+  setSpeedFps(impl, impl.targetFps - SPEED_STEP_FPS);
 }
 
 void
@@ -662,6 +682,24 @@ App::renderModeMenu(Impl& impl)
 }
 
 void
+App::renderSpeedMenu(Impl& impl)
+{
+  if (!ImGui::BeginMenu("Speed")) {
+    return;
+  }
+  // NOLINTNEXTLINE(cppcoreguidelines-pro-type-vararg,hicpp-vararg)
+  ImGui::TextDisabled("%.0f FPS", impl.targetFps);
+  ImGui::Separator();
+  if (ImGui::MenuItem("Increase", "Ctrl+=")) {
+    increaseSpeed(impl);
+  }
+  if (ImGui::MenuItem("Decrease", "Ctrl+-")) {
+    decreaseSpeed(impl);
+  }
+  ImGui::EndMenu();
+}
+
+void
 App::renderAudioMenu(Impl& impl)
 {
   if (!ImGui::BeginMenu("Audio")) {
@@ -762,6 +800,7 @@ App::renderMenuBar(Impl& impl)
       togglePause(impl);
     }
     renderModeMenu(impl);
+    renderSpeedMenu(impl);
     ImGui::EndMenu();
   }
   renderAudioMenu(impl);
@@ -870,6 +909,43 @@ App::checkEmscriptenLoadStateRequest(Impl& impl)
 
 #endif
 
+bool
+App::handleCtrlShortcut(Impl& impl, int scancode)
+{
+  switch (static_cast<SDL_Scancode>(scancode)) {
+#ifndef __EMSCRIPTEN__
+    case SDL_SCANCODE_O:
+      showOpenRomDialog(impl);
+      return true;
+#endif
+    case SDL_SCANCODE_R:
+      resetGame(impl);
+      return true;
+    case SDL_SCANCODE_P:
+      togglePause(impl);
+      return true;
+    case SDL_SCANCODE_EQUALS:
+      increaseSpeed(impl);
+      return true;
+    case SDL_SCANCODE_MINUS:
+      decreaseSpeed(impl);
+      return true;
+#ifndef __EMSCRIPTEN__
+    case SDL_SCANCODE_S:
+      saveGameState(impl);
+      return true;
+    case SDL_SCANCODE_L:
+      loadGameState(impl);
+      return true;
+#endif
+    case SDL_SCANCODE_A:
+      toggleAudioEnabled(impl);
+      return true;
+    default:
+      return false;
+  }
+}
+
 void
 App::pollEvents(Impl& impl)
 {
@@ -878,34 +954,10 @@ App::pollEvents(Impl& impl)
     ImGui_ImplSDL3_ProcessEvent(&event);
     if (event.type == SDL_EVENT_QUIT) {
       impl.running = false;
-#ifndef __EMSCRIPTEN__
     } else if (event.type == SDL_EVENT_KEY_DOWN && !event.key.repeat &&
-               event.key.scancode == SDL_SCANCODE_O &&
-               (event.key.mod & SDL_KMOD_CTRL) != 0) {
-      showOpenRomDialog(impl);
-#endif
-    } else if (event.type == SDL_EVENT_KEY_DOWN && !event.key.repeat &&
-               event.key.scancode == SDL_SCANCODE_R &&
-               (event.key.mod & SDL_KMOD_CTRL) != 0) {
-      resetGame(impl);
-    } else if (event.type == SDL_EVENT_KEY_DOWN && !event.key.repeat &&
-               event.key.scancode == SDL_SCANCODE_P &&
-               (event.key.mod & SDL_KMOD_CTRL) != 0) {
-      togglePause(impl);
-#ifndef __EMSCRIPTEN__
-    } else if (event.type == SDL_EVENT_KEY_DOWN && !event.key.repeat &&
-               event.key.scancode == SDL_SCANCODE_S &&
-               (event.key.mod & SDL_KMOD_CTRL) != 0) {
-      saveGameState(impl);
-    } else if (event.type == SDL_EVENT_KEY_DOWN && !event.key.repeat &&
-               event.key.scancode == SDL_SCANCODE_L &&
-               (event.key.mod & SDL_KMOD_CTRL) != 0) {
-      loadGameState(impl);
-#endif
-    } else if (event.type == SDL_EVENT_KEY_DOWN && !event.key.repeat &&
-               event.key.scancode == SDL_SCANCODE_A &&
-               (event.key.mod & SDL_KMOD_CTRL) != 0) {
-      toggleAudioEnabled(impl);
+               (event.key.mod & SDL_KMOD_CTRL) != 0 &&
+               handleCtrlShortcut(impl, static_cast<int>(event.key.scancode))) {
+      // handled above
     } else if (event.type == SDL_EVENT_KEY_DOWN && !event.key.repeat &&
                isVideoShortcutScancode(event.key.scancode)) {
       handleVideoShortcut(impl, static_cast<int>(event.key.scancode));
@@ -947,8 +999,9 @@ App::frameStep(void* userData)
   }
   const auto elapsedMs =
     static_cast<double>(SDL_GetTicks() - impl.emulationStartTicks);
+  const auto targetFrameMs = 1000.0 / impl.targetFps;
   const auto dueFrameCount =
-    static_cast<std::uint64_t>(elapsedMs / TARGET_FRAME_MS) + 1;
+    static_cast<std::uint64_t>(elapsedMs / targetFrameMs) + 1;
   const bool shouldEmulateFrame = impl.framesEmulated < dueFrameCount;
 #endif
 
@@ -1158,8 +1211,9 @@ App::run(std::optional<std::string_view> romPath, gbemu::Mode mode)
     const auto frameStart = SDL_GetTicks();
     frameStep(m_impl.get());
     const auto elapsedMs = static_cast<double>(SDL_GetTicks() - frameStart);
-    if (elapsedMs < TARGET_FRAME_MS) {
-      SDL_Delay(static_cast<Uint32>(TARGET_FRAME_MS - elapsedMs));
+    const auto targetFrameMs = 1000.0 / m_impl->targetFps;
+    if (elapsedMs < targetFrameMs) {
+      SDL_Delay(static_cast<Uint32>(targetFrameMs - elapsedMs));
     }
   }
 #endif

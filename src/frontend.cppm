@@ -33,9 +33,11 @@ private:
 
   static void loadPendingRom(Impl& impl);
   static void pollEvents(Impl& impl);
+  static bool handleCtrlShortcut(Impl& impl, int scancode);
   static void renderImGuiFrame(Impl& impl);
   static void renderMenuBar(Impl& impl);
   static void renderModeMenu(Impl& impl);
+  static void renderSpeedMenu(Impl& impl);
   static void renderErrorBar(Impl& impl);
   static void renderAudioMenu(Impl& impl);
   static void renderVideoMenu(Impl& impl);
@@ -45,6 +47,9 @@ private:
   static void setMode(Impl& impl, gbemu::Mode mode);
   static void toggleAudioEnabled(Impl& impl);
   static void syncAudioDeviceState(Impl& impl);
+  static void setSpeedFps(Impl& impl, double fps);
+  static void increaseSpeed(Impl& impl);
+  static void decreaseSpeed(Impl& impl);
   static void applyWindowSize(Impl& impl);
   static void setVideoScale(Impl& impl, int scale);
   static void toggleFullscreen(Impl& impl);
