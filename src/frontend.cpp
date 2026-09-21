@@ -462,9 +462,15 @@ App::handleVideoShortcut(Impl& impl, int scancode)
       toggleFullscreen(impl);
       break;
     case SDL_SCANCODE_ESCAPE:
+#ifndef __EMSCRIPTEN__
       if (impl.fullscreen) {
         toggleFullscreen(impl);
       }
+#endif
+      // On Emscripten, the browser already exits real (Fullscreen API)
+      // fullscreen on Escape by itself - see syncFullscreenState(), which
+      // picks that up instead of racing it with our own
+      // SDL_SetWindowFullscreen() call here.
       break;
     default:
       break;
@@ -907,6 +913,23 @@ App::checkEmscriptenLoadStateRequest(Impl& impl)
   readStateFromFile(impl, std::filesystem::path("/gbemu_saves") / *filename);
 }
 
+void
+App::syncFullscreenState(Impl& impl)
+{
+  const bool actuallyFullscreen =
+    (SDL_GetWindowFlags(impl.window) & SDL_WINDOW_FULLSCREEN) != 0;
+  if (impl.fullscreen && !actuallyFullscreen) {
+    // The browser exits real (Fullscreen API) fullscreen on its own when
+    // Escape is pressed - our own SDL_SetWindowFullscreen(false) call from
+    // handleVideoShortcut() raced against that native exit and could leave
+    // impl.fullscreen (and so the hidden menu bar) stuck until a second
+    // Escape press. Detect the browser-driven exit here instead and follow
+    // it, rather than also requesting one ourselves.
+    impl.fullscreen = false;
+    applyWindowSize(impl);
+  }
+}
+
 #endif
 
 bool
@@ -984,6 +1007,7 @@ App::frameStep(void* userData)
   checkEmscriptenLoadRequest(impl);
   checkEmscriptenSaveStateRequest(impl);
   checkEmscriptenLoadStateRequest(impl);
+  syncFullscreenState(impl);
 #endif
   loadPendingRom(impl);
 #ifndef __EMSCRIPTEN__

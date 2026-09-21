@@ -71,6 +71,7 @@ private:
   static void checkEmscriptenLoadRequest(Impl& impl);
   static void checkEmscriptenSaveStateRequest(Impl& impl);
   static void checkEmscriptenLoadStateRequest(Impl& impl);
+  static void syncFullscreenState(Impl& impl);
 };
 
 }
