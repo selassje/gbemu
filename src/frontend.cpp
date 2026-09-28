@@ -347,6 +347,7 @@ struct App::Impl
   std::optional<std::string> pendingLoadStatePath;
 #endif
   float menuBarHeight = 0.0F;
+  float errorBarHeight = 0.0F;
 #ifdef __EMSCRIPTEN__
   Uint64 emulationStartTicks = 0;
   std::uint64_t framesEmulated = 0;
@@ -418,10 +419,11 @@ App::decreaseSpeed(Impl& impl)
 void
 App::applyWindowSize(Impl& impl)
 {
+  const int barsHeight =
+    static_cast<int>(std::ceil(impl.menuBarHeight + impl.errorBarHeight));
   SDL_SetWindowSize(impl.window,
                     windowWidthFor(impl.videoScale),
-                    windowHeightFor(impl.videoScale) +
-                      static_cast<int>(std::ceil(impl.menuBarHeight)));
+                    windowHeightFor(impl.videoScale) + barsHeight);
 }
 
 void
@@ -755,7 +757,7 @@ void
 App::renderErrorBar(Impl& impl)
 {
   const ImGuiIO& io = ImGui::GetIO();
-  const float barHeight = ImGui::GetFrameHeight();
+  const float barHeight = impl.errorBarHeight;
   const ImVec2 barMin{ 0.0F, io.DisplaySize.y - barHeight };
   const ImVec2 barMax{ io.DisplaySize.x, io.DisplaySize.y };
 
@@ -1075,8 +1077,8 @@ App::frameStep(void* userData)
         .h = static_cast<float>(outputHeight),
       };
     } else {
-      const float availableHeight =
-        static_cast<float>(outputHeight) - impl.menuBarHeight;
+      const float availableHeight = static_cast<float>(outputHeight) -
+                                    impl.menuBarHeight - impl.errorBarHeight;
       const float scale =
         std::min(static_cast<float>(outputWidth) /
                    static_cast<float>(gbemu::SCREEN_WIDTH),
@@ -1212,6 +1214,7 @@ App::run(std::optional<std::string_view> romPath, gbemu::Mode mode)
   ImGui::NewFrame();
   ImGui::EndFrame();
   m_impl->menuBarHeight = ImGui::GetFrameHeight() + MENU_BAR_GAP;
+  m_impl->errorBarHeight = ImGui::GetFrameHeight();
   applyWindowSize(*m_impl);
 
   const SDL_AudioSpec audioSpec = {
